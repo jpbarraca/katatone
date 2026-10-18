@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-gui = ["flet>=1.0"]
+gui = ["flet>=1.0", "numpy>=1.26"]
 dev = ["pytest>=8", "platformdirs"]
 
 [project.scripts]

@@ -20,6 +20,8 @@ interface covers the same operations without the GUI.
 - **Library** — save patches into livesets (`.tsl` files) and write them back to the amp
 - **Tone Central** — browse and download patches from the official BOSS site
   ([details](docs/tone-central.md))
+- **Analyzer** — a second window with a level meter and spectrum of the amp's
+  USB audio, to watch the result of a tweak ([details](docs/analyzer.md))
 - **System settings** — edit the amp's global settings
 - **MIDI controllers** — switch channels, toggle effects and drive wah / volume
   from pedals and keyboards ([details](docs/midi-controllers.md))
@@ -32,7 +34,8 @@ Needs Linux and Python 3.10+.  With [pipx](https://pipx.pypa.io/):
 pipx install --system-site-packages "katatone[gui] @ git+https://github.com/jpbarraca/katatone"
 ```
 
-Tone Central (in the Library tab) also needs WebKitGTK and PyGObject from your distribution
+The Analyzer needs `arecord` (package `alsa-utils`).  Tone Central (in the
+Library tab) also needs WebKitGTK and PyGObject from your distribution
 (`webkit2gtk-4.1-0 python3-gi gir1.2-webkit2-4.1` on Debian/Ubuntu,
 `webkit2gtk4.1 python3-gobject` on Fedora).  Upgrade with
 `pipx upgrade katatone`.

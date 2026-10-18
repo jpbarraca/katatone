@@ -21,7 +21,7 @@ GUI_DIR = Path(__file__).resolve().parent.parent / "katatone" / "gui"
 FLET_MODULES = ["app.py", "statusbar.py", "patch_editor.py", "system_pane.py",
                 "library_pane.py", "knob.py",
                 "params_view.py", "midi_pane.py", "mapping_dialog.py",
-                "dialogs.py"]
+                "dialogs.py", "analyzer.py"]
 
 
 # ---------------------------------------------------------------------------

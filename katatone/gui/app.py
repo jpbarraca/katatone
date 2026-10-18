@@ -71,6 +71,8 @@ class App:
         self.lib = Library()
         # Popen of the confined Tone Exchange webview (see tonecentral_open).
         self.tc_proc: "subprocess.Popen | None" = None
+        # Popen of the analyzer window (see open_analyzer); fully independent.
+        self.an_proc: "subprocess.Popen | None" = None
         self.busy = False
         self._map = load_map()
         self.model = slots.DEFAULT_MODEL    # until the amp identifies itself
@@ -1130,6 +1132,40 @@ class App:
         """
         self._tc_spawn([url], f"Opening Tone Exchange: {url}")
 
+    def open_analyzer(self) -> None:
+        """Open the analyzer window (level meter and spectrum of a sound-card
+        input) in its own process, unless it is already open.
+
+        The window shares nothing with the editor; the amp's card name is
+        only passed so the right input is preselected.  Its output goes to
+        ``analyzer.log`` in the data dir.
+        """
+        import subprocess
+        import sys
+        from ..remote.webview import data_dir
+        if self.an_proc is not None and self.an_proc.poll() is None:
+            self.set_status("The analyzer window is already open.")
+            return
+        cmd = [sys.executable, "-m", "katatone.gui.analyzer"]
+        card = getattr(getattr(self, "sb_amp", None), "value", None)
+        if card:
+            cmd += ["--card", card]
+        try:
+            with open(data_dir() / "analyzer.log", "wb") as log_file:
+                self.an_proc = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL, stderr=log_file)
+        except OSError as e:
+            self.an_proc = None
+            self.set_status(f"Analyzer failed to start: {e}")
+            return
+        self.set_status("Analyzer window opened.")
+
+    def stop_analyzer(self) -> None:
+        """Close the analyzer window if it is open."""
+        proc, self.an_proc = self.an_proc, None
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+
 
 def main(argv: list[str] | None = None) -> None:
     """Parse the CLI flags and run the Flet app.
@@ -1155,6 +1191,7 @@ def main(argv: list[str] | None = None) -> None:
     ft.run(main=lambda page: apps.append(App(page)))
     for app in apps:
         app.stop_midi()
+        app.stop_analyzer()
     sys.stdout.flush()
     # skip atexit: alsa-lib static cleanup segfaults on PipeWire hosts
     os._exit(0)

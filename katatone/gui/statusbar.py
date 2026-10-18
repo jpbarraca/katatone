@@ -75,6 +75,8 @@ def build(app: App) -> ft.Control:
                            border=ft.Border.all(1, theme.ACCENT_DIM),
                            tooltip="MIDI controllers: none")
     sb_patch = ft.Text("", size=13, color=theme.FOREGROUND, no_wrap=True)
+    sb_analyzer = pv.button("Analyzer", ft.Icons.GRAPHIC_EQ,
+                            lambda e: app.open_analyzer())
     sb_mute = pv.button("Preview mute", ft.Icons.VOLUME_OFF,
                       lambda e: app.set_mute(True))
     sb_unmute = pv.button("Unmute", ft.Icons.VOLUME_UP,
@@ -98,7 +100,7 @@ def build(app: App) -> ft.Control:
             ft.Container(expand=True),
             ft.Row([ft.Text("MIDI", size=10, color=theme.MUTED), sb_midi],
                    spacing=4, tight=True),
-            sb_mute, sb_unmute,
+            sb_analyzer, sb_mute, sb_unmute,
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=12),
         gradient=ft.LinearGradient(begin=ft.Alignment.TOP_CENTER,
                                    end=ft.Alignment.BOTTOM_CENTER,
