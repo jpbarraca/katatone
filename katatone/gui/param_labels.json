@@ -1,12 +1,12 @@
 {
   "_comment": "Maps PRMID_* combo parameter names to display strings. Index 0 = value min, index 1 = min+1, etc. Used by model.py to render dropdowns with human-readable labels instead of raw integers. Upgradable: add new entries here without code changes.",
   "PRMID_PATCH_AMP_TYPE": [
-    "ACOUSTIC",
-    "CLEAN",
-    "PUSHED",
-    "CRUNCH",
-    "LEAD",
-    "BROWN"
+    "Acoustic",
+    "Clean",
+    "Pushed",
+    "Crunch",
+    "Lead",
+    "Brown"
   ],
   "PRMID_PATCH_AMP_PREAMP_VARIATION": [
     "A",

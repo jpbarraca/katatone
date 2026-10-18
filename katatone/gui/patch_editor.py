@@ -435,8 +435,8 @@ class PatchEditor:
         if re.fullmatch(r"(BOOSTER|CONTOUR)\(\d\)", bname) or bname in (
                 "PEDALFX_COM", "NS", "SENDRETURN", "CONTOUR_COM", "SOLO_COM"):
             return "inline"
-        if bname == "SOLO_EQ":
-            return "two_lines"
+        if bname in ("SOLO_EQ", "AMP"):
+            return "two_lines"           # AMP: the variations sit left of the amp type
         if bname.startswith("SOLO_"):
             return "switch_row"
         return "rows"

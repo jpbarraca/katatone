@@ -136,7 +136,7 @@ def test_regression_rows_use_canonical_patch_key() -> None:
     assert by_label["GAIN"] == 80
     assert by_label["VOLUME"] == 90
     assert by_label["BASS"] == 75
-    assert by_label["TYPE"] == 2
+    assert by_label["AMP"] == 2
     # ...and get_param (used by every row) resolves the canonical key.
     assert ps.get_param(r, "AMP", 0) == 80
 
@@ -145,13 +145,13 @@ def test_regression_string_combo_maps_value_to_label() -> None:
     """String-labeled combos must preselect a label, not the index.
 
     A Flet Dropdown matches ``value`` to an option *label*, so the value set
-    for a string combo must be the label itself (e.g. ``'PUSHED'``, never
+    for a string combo must be the label itself (e.g. ``'Pushed'``, never
     ``'2'``).  This locks the value->label mapping for the four string combos: Amp Type, Cabinet
     Resonance, Master Key and Send Return Position.
     """
     r = load_map()["PATCH(1)"]
     ps = ParamSet()
-    # AMP: TYPE (index 7) = 2 -> 'PUSHED'
+    # AMP: TYPE (index 7) = 2 -> 'Pushed'
     ps.set_block("PATCH%AMP", bytes([80, 90, 75, 60, 45, 30, 0, 2, 0, 0]))
     # OTHER: CABINET_RESONANCE = 1 -> 'MODERN', MASTER_KEY = 4 -> 'E'
     other = bytearray(r.block("OTHER").length)
@@ -169,7 +169,7 @@ def test_regression_string_combo_maps_value_to_label() -> None:
     ps.set_block("PATCH%SENDRETURN", bytes(sr))
 
     cases = [
-        ("AMP", "AMP_TYPE", "PUSHED"),
+        ("AMP", "AMP_TYPE", "Pushed"),
         ("OTHER", "CABINET_RESONANCE", "MODERN"),
         ("OTHER", "MASTER_KEY", "E"),
         ("SENDRETURN", "SENDRETURN_POSITION", "PRE FV"),
@@ -192,21 +192,22 @@ def test_row_for_block_amp() -> None:
     rows = row_for_block(r, "AMP", ps)
     assert len(rows) == 10
     assert all(isinstance(x, RowDesc) for x in rows)
-    # TYPE is reordered to the top (p_index=7, raw[7]=8)
-    assert rows[0].label == "TYPE"
-    assert rows[0].p_index == 7
-    assert rows[0].value == 8
-    # GAIN is now second (p_index=0, raw[0]=1)
-    assert rows[1].label == "GAIN"
-    assert rows[1].p_index == 0
-    assert rows[1].value == 1
-    # AMP has 7 knobs, 1 combo (TYPE), 2 radios (VARIATION)
+    # The variations are checkboxes first, then the amp type (p_index=7, raw[7]=8)
+    assert [r.label for r in rows[:3]] == ["PRE VARIATION", "PWR VARIATION", "AMP"]
+    assert [r.kind for r in rows[:3]] == ["checkbox", "checkbox", "combo"]
+    assert rows[2].p_index == 7
+    assert rows[2].value == 8
+    # GAIN is the first knob (p_index=0, raw[0]=1)
+    assert rows[3].label == "GAIN"
+    assert rows[3].p_index == 0
+    assert rows[3].value == 1
+    # AMP has 7 knobs, 1 combo (the amp), 2 checkboxes (the variations)
     kinds = [x.kind for x in rows]
     assert kinds.count("knob") == 7
     assert kinds.count("combo") == 1
-    assert kinds.count("radio") == 2
-    # after TYPE, the next six are GAIN/VOLUME/BASS/MIDDLE/TREBLE/PRESENCE
-    assert all(k == "knob" for k in kinds[1:7])
+    assert kinds.count("checkbox") == 2 and kinds.count("radio") == 0
+    # after the amp, the next six are GAIN/VOLUME/BASS/MIDDLE/TREBLE/PRESENCE
+    assert all(k == "knob" for k in kinds[3:9])
     assert rows[0].block == "AMP"
 
 
@@ -293,7 +294,7 @@ def test_no_sliders_and_every_sw_is_a_checkbox(region: str) -> None:
 
 
 @pytest.mark.parametrize("block,suffix,count,first,last", [
-    ("AMP", "AMP_TYPE", 6, "ACOUSTIC", "BROWN"),
+    ("AMP", "AMP_TYPE", 6, "Acoustic", "Brown"),
     ("BOOSTER(1)", "BOOSTER_TYPE", 23, "MID BOOST", "CENTA OD"),
     ("FX(4)", "FX_TYPE", 31, "T.WAH", "PEDAL BEND"),
     ("DELAY(1)", "DELAY_TYPE", 8, "DIGITAL", "SDE-3000"),
@@ -388,3 +389,28 @@ def test_flet_module_byte_compiles(mod: str) -> None:
     path = GUI_DIR / mod
     assert path.exists(), f"missing gui module: {mod}"
     py_compile.compile(str(path), doraise=True)
+
+
+def test_the_amp_is_a_dropdown_of_named_amps_labelled_amp() -> None:
+    row = _row("PATCH(1)", "AMP", "AMP_TYPE")
+    assert row.kind == "combo" and row.label == "AMP"
+    assert row.options == ("Acoustic", "Clean", "Pushed", "Crunch", "Lead", "Brown")
+    assert model.display_label("PRMID_PATCH_AMP_TYPE", "AMP") == "AMP"
+    assert model.display_label("PRMID_PATCH_BOOSTER_TYPE", "BOOSTER(1)") == "TYPE"   # others unchanged
+
+
+def test_amp_variations_are_checkboxes_left_of_the_amp_type() -> None:
+    """Checked means B; the row values stay 0 (A) / 1 (B), as the radios had."""
+    from katatone.model.paramset import ParamSet
+    r = load_map()["PATCH(1)"]
+    rows = row_for_block(r, "AMP", ParamSet())
+    pre = next(x for x in rows if x.param.name.endswith("PREAMP_VARIATION"))
+    pwr = next(x for x in rows if x.param.name.endswith("POWERAMP_VARIATION"))
+    assert pre.kind == pwr.kind == "checkbox" and pre.options == pwr.options == ("A", "B")
+    assert (pre.param.min, pre.param.max) == (0, 1)
+    assert rows.index(pre) < rows.index(pwr) < next(i for i, x in enumerate(rows) if x.kind == "combo")
+
+
+def test_the_amp_card_puts_its_checkboxes_and_the_amp_type_on_one_line() -> None:
+    from katatone.gui.patch_editor import PatchEditor
+    assert PatchEditor._body_style("AMP") == "two_lines"

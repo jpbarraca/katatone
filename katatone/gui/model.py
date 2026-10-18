@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -184,6 +185,9 @@ def _display_label(name: str, block_name: str) -> str:
     # A bare "SW" (NS / SENDRETURN) -> "Enable"
     if raw == "SW":
         raw = "Enable"
+    # The amp's type is chosen by name (Acoustic, Clean, ...): call it "AMP"
+    if name.endswith("_AMP_TYPE"):
+        raw = "AMP"
     return raw
 
 
@@ -282,13 +286,26 @@ def row_for_block(region: Region, block_name: str, ps: ParamSet) -> list[RowDesc
         label = _display_label(p.name, block_name)
         out.append(RowDesc(block=block_name, p_index=i, param=p, kind=kind,
                            label=label, value=value, options=options))
-    # Reorder: in AMP block, move TYPE param to the top
-    if block_name == "AMP" and len(out) > 1:
-        type_idx = next((j for j, r in enumerate(out)
-                         if r.param.name.endswith("AMP_TYPE")), None)
-        if type_idx is not None and type_idx > 0:
-            out.insert(0, out.pop(type_idx))
+    if block_name == "AMP":
+        out = _arrange_amp(out)
     return out
+
+
+def _arrange_amp(rows: list[RowDesc]) -> list[RowDesc]:
+    """The AMP block's rows in the order the card shows them.
+
+    The preamp and poweramp variations (A or B) become checkboxes (checked = B),
+    labelled "PRE VARIATION" and "PWR VARIATION", and come first, then the amp type, then the rest.
+    """
+    short = {"_PREAMP_VARIATION": "PRE VARIATION", "_POWERAMP_VARIATION": "PWR VARIATION"}
+    rows = [dataclasses.replace(r, kind="checkbox", label=next(
+                v for k, v in short.items() if r.param.name.endswith(k)))
+            if r.param.name.endswith(tuple(short)) and r.kind == "radio" else r for r in rows]
+
+    def first(suffix: str) -> list[RowDesc]:
+        return [r for r in rows if r.param.name.endswith(suffix)]
+    head = first("_PREAMP_VARIATION") + first("_POWERAMP_VARIATION") + first("_AMP_TYPE")
+    return head + [r for r in rows if r not in head]
 
 
 def rows_for_region(region: Region, ps: ParamSet) -> dict[str, list[RowDesc]]:
