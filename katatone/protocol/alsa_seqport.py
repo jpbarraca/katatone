@@ -36,7 +36,6 @@ SND_SEQ_QUEUE_DIRECT = 253
 SND_SEQ_ADDRESS_SUBSCRIBERS = 254
 EV_NOTEON, EV_PGMCHANGE = 6, 11
 _RECV_MAX = 256
-_clients = 0
 
 
 class Event(ctypes.Structure):
@@ -143,8 +142,6 @@ class SeqDaemon:
         self._fds = [int.from_bytes(buf[i * 8:i * 8 + 4], "little", signed=True) for i in range(n)]
         self._src: tuple[int, int] | None = None
         self._name = name
-        self._pw: str | None = None            # a PipeWire source linked to our port
-        self._pw_checked = 0.0
 
     # -- listing ------------------------------------------------------------
     def inports(self) -> list[InPort]:
@@ -188,8 +185,6 @@ class SeqDaemon:
         Raises:
             RuntimeError: if the spec is malformed or the port is gone.
         """
-        if spec.startswith(pwmidi.SPEC_PREFIX):
-            return self._open_pipewire(spec[len(pwmidi.SPEC_PREFIX):])
         try:
             client, port = (int(x) for x in spec[len(SPEC_PREFIX):].split(":"))
         except ValueError:
@@ -199,19 +194,7 @@ class SeqDaemon:
             raise RuntimeError("openin failed: the sequencer port is gone")
         self._src = (client, port)
 
-    def _open_pipewire(self, source: str) -> None:
-        """Link a PipeWire MIDI source to this client's port; its events then
-        arrive here from PipeWire's own sequencer client."""
-        self._unsubscribe()
-        dest = pwmidi.sequencer_port(self._name, "input")
-        if not pwmidi.link(source, dest):
-            raise RuntimeError("openin failed: the PipeWire source is gone")
-        self._pw, self._pw_dest, self._pw_checked = source, dest, time.monotonic()
-
     def _unsubscribe(self) -> None:
-        if self._pw is not None:
-            pwmidi.unlink(self._pw, self._pw_dest)
-            self._pw = None
         if self._src is not None:
             self._lib.snd_seq_disconnect_from(self._h, self.port, *self._src)
             self._src = None
@@ -219,10 +202,6 @@ class SeqDaemon:
     def rawrecv(self, timeout: float) -> bytes:
         """Wait up to ``timeout`` seconds and return the MIDI bytes that arrived."""
         out = bytearray()
-        if self._pw is not None and time.monotonic() - self._pw_checked > 2.0:
-            self._pw_checked = time.monotonic()
-            if not pwmidi.present(self._pw):
-                raise PortGoneError(self._pw)      # the device went away
         end = time.monotonic() + timeout
         while True:
             self._drain(out)
@@ -237,7 +216,7 @@ class SeqDaemon:
         ev = POINTER(Event)()
         buf = (c_ubyte * 16)()
         while lib.snd_seq_event_input(self._h, byref(ev)) >= 0 and ev:
-            if self._pw is None and (ev.contents.src_client, ev.contents.src_port) != self._src:
+            if (ev.contents.src_client, ev.contents.src_port) != self._src:
                 continue
             lib.snd_midi_event_init(self._dec)
             n = lib.snd_midi_event_decode(self._dec, buf, len(buf), ev)
@@ -298,19 +277,13 @@ class CombinedDaemon:
         self._raw = (raw_factory or _Daemon)()
         self._seq_factory = seq_factory
         self._seq: SeqDaemon | None = None
+        self._pw = None                 # the reader of a PipeWire source, while open
         self._active = None
 
     def _sequencer(self):
         if self._seq is None:
             self._seq = self._seq_factory()
         return self._seq
-
-    def _link_client(self):
-        """A sequencer client of its own (a unique name, so PipeWire's name for its
-        port is unambiguous) for a PipeWire device."""
-        global _clients
-        _clients += 1
-        return self._seq_factory(f"KataTone {os.getpid()}-{_clients}")
 
     def inports(self) -> list[InPort]:
         """Rawmidi inputs, then the sequencer's user-client ports."""
@@ -323,13 +296,14 @@ class CombinedDaemon:
 
     def openin(self, spec: str) -> None:
         """Open a rawmidi device or a sequencer port for input."""
+        if self._pw is not None:
+            self._pw.close()
+            self._pw = None
         if spec.startswith(pwmidi.SPEC_PREFIX):
-            if self._seq is not None:
-                self._seq.close()
-            self._seq = self._link_client()
-            target = self._seq
-        else:
-            target = self._sequencer() if spec.startswith(SPEC_PREFIX) else self._raw
+            self._pw = pwmidi.DumpReader(spec[len(pwmidi.SPEC_PREFIX):])
+            self._active = self._pw
+            return
+        target = self._sequencer() if spec.startswith(SPEC_PREFIX) else self._raw
         target.openin(spec)
         self._active = target
 
@@ -341,7 +315,7 @@ class CombinedDaemon:
 
     def close(self) -> None:
         """Close both."""
-        for d in (self._seq, self._raw):
+        for d in (self._pw, self._seq, self._raw):
             if d is not None:
                 d.close()
-        self._seq = None
+        self._seq = self._pw = None

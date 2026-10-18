@@ -49,10 +49,14 @@ Bluetooth MIDI devices are not sound cards.  The system pairs and connects them
 
 - **PipeWire (e.g. Fedora, Raspberry Pi OS with PipeWire):** the device is a PipeWire
   MIDI source, `bluez_midi.<address>`.  KataTone lists it in the **MIDI** tab under the
-  device's name, and **runs `pw-link` itself**: enabling the device links it to a
-  sequencer port of KataTone's own, and closing it (or switching it off) removes the
-  link.  It needs `pw-link` (package `pipewire-utils`).  If the device goes away the
-  input shows as missing and reconnects when it returns.
+  device's name.  Enabling it starts a `pw-mididump` process, **runs `pw-link` itself**
+  to link the device to it, and reads the messages it prints (notes, controls,
+  program changes, pitch bend, pressure; not sysex); closing the input (or switching the
+  device off) stops it and the link goes.  It needs `pw-link` and `pw-mididump`
+  (package `pipewire-utils`).  If the device goes away the input shows as missing and
+  reconnects when it returns.  This is deliberately not routed through the ALSA
+  sequencer: a link into a sequencer client makes PipeWire's sequencer bridge subscribe to
+  every sequencer port, which takes the amp's USB MIDI device away from KataTone.
 - **BlueZ's MIDI bridge (no PipeWire):** the device is a port of a sequencer client;
   KataTone lists it and subscribes to it, with no `pw-link` involved.
 
