@@ -128,7 +128,7 @@ def _app(monkeypatch):
 def test_the_tuner_opens_in_its_own_process_with_the_amp_card(monkeypatch) -> None:
     app, status = _app(monkeypatch)
     app.open_tuner()
-    assert _Proc.cmd[1:] == ["-m", "katatone.gui.tuner", "--card", "KATANA3"]
+    assert _Proc.cmd[1:] == ["-m", "katatone.gui.tuner", "--mute-pipe", "--card", "KATANA3"]
     assert app.an_proc is None and status[-1] == "Tuner window opened."
 
 
@@ -191,3 +191,83 @@ def test_on_the_desktop_the_tools_are_windows_of_their_own() -> None:
     buttons["Analyzer"].on_click(None)
     buttons["Tuner"].on_click(None)
     assert opened == ["a", "t"]
+
+
+# ------------------------------------------------------------ muting the amp
+
+@pytest.fixture
+def muting(monkeypatch):
+    monkeypatch.setattr(tn, "list_input_devices", lambda: [])
+    calls = []
+    return tn.TunerWindow(Page(), on_mute=calls.append), calls
+
+
+def test_the_checkbox_mutes_and_unchecking_restores(muting) -> None:
+    w, calls = muting
+    assert not w.mute.disabled
+    w.mute.value = True
+    w.mute.on_change(None)
+    w.mute.value = False
+    w.mute.on_change(None)
+    assert calls == [True, False]
+
+
+def test_stopping_the_tuner_and_closing_the_window_restore_the_amp(muting) -> None:
+    w, calls = muting
+    w._set_mute(True)
+    w._stop()
+    assert calls == [True, False] and w.mute.value is False
+    w._set_mute(True)
+    w.close()
+    assert calls == [True, False, True, False]
+    w.close()
+    assert calls[-1] is False and len(calls) == 4          # nothing sent twice
+
+
+def test_without_an_amp_link_the_checkbox_is_disabled(window) -> None:
+    assert window.mute.disabled
+    window._set_mute(True)
+    assert window._muted is False
+
+
+def test_a_failing_mute_leaves_the_checkbox_off(monkeypatch) -> None:
+    monkeypatch.setattr(tn, "list_input_devices", lambda: [])
+
+    def boom(m):
+        raise OSError("amp gone")
+    w = tn.TunerWindow(Page(), on_mute=boom)
+    w._set_mute(True)
+    assert w.mute.value is False and "amp gone" in w._error
+
+
+def test_the_main_window_relays_the_tuners_requests_and_restores_on_exit(monkeypatch) -> None:
+    from katatone.gui import app as gui_app
+    app = object.__new__(gui_app.App)
+    sent = []
+    app.set_mute = sent.append
+    proc = types.SimpleNamespace(stdout=iter(["MUTE 1\n", "noise\n"]))
+    app._follow_tuner(proc)                         # the window ended while muted
+    assert sent == [True, False] and app._tuner_muted is False
+    sent.clear()
+    app._follow_tuner(types.SimpleNamespace(stdout=iter(["MUTE 1\n", "MUTE 0\n"])))
+    assert sent == [True, False]
+
+
+def test_in_a_browser_the_tuner_gets_the_backend_mute(monkeypatch) -> None:
+    from katatone.gui import app as gui_app
+    made = []
+
+    class Tool:
+        wants_mute = True
+
+        def __init__(self, page, card, on_mute=None):
+            made.append(on_mute)
+
+        def close(self): pass
+    monkeypatch.setattr(gui_app, "_tool_class", lambda page: Tool)
+    backend = types.SimpleNamespace(amp_port=None, set_tuner_mute=lambda m: None,
+                                    launch_tokens=gui_app.auth_mod.LaunchTokens())
+    token = backend.launch_tokens.issue()
+    page = types.SimpleNamespace(route=f"/tuner?token={token}", clean=lambda: None)
+    gui_app._open_web_session(page, backend)
+    assert made == [backend.set_tuner_mute]

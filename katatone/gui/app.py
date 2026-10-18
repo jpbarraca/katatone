@@ -727,6 +727,14 @@ class App:
         """Give up everything the app holds: the controllers, the analyzer
         window and the amp link (idempotent; used when a window closes or the
         server stops)."""
+        if getattr(self, "_tuner_muted", False):
+            self._tuner_muted = False
+            try:
+                from ..amp.write import set_preview_mute
+                if self.transport is not None:
+                    set_preview_mute(self.transport, False)
+            except Exception:                        # noqa: BLE001
+                pass
         self.stop_auto_connect()
         self.stop_midi()
         self.stop_analyzer()
@@ -1403,9 +1411,30 @@ class App:
         """Open the guitar tuner window in its own process, unless it is
         already open (it is built like the analyzer, see :meth:`open_analyzer`)."""
         self.tuner_proc = self._open_tool(self.tuner_proc, "katatone.gui.tuner", "tuner",
-                                          "Tuner")
+                                          "Tuner", mute_pipe=True)
+        if self.tuner_proc is not None and getattr(self.tuner_proc, "stdout", None):
+            threading.Thread(target=self._follow_tuner, args=(self.tuner_proc,),
+                             daemon=True).start()
 
-    def _open_tool(self, proc, module: str, name: str, title: str):
+    def _follow_tuner(self, proc) -> None:
+        """Apply the tuner window's mute requests; restore the amp when it ends."""
+        for line in proc.stdout:
+            if line.strip() in ("MUTE 1", "MUTE 0"):
+                self.set_tuner_mute(line.strip() == "MUTE 1")
+        if getattr(self, "_tuner_muted", False):
+            self.set_tuner_mute(False)          # the window closed or crashed
+
+    def set_tuner_mute(self, mute: bool) -> None:
+        """Mute (or restore) the amp's output for the tuner.
+
+        Args:
+            mute: True while the tuner asks for silence.
+        """
+        self._tuner_muted = mute
+        self.set_mute(mute)
+
+    def _open_tool(self, proc, module: str, name: str, title: str,
+                   mute_pipe: bool = False):
         """Start a sound-card tool window as its own process.
 
         Only used on the desktop: a browser session opens the tool as another
@@ -1424,7 +1453,7 @@ class App:
         if proc is not None and proc.poll() is None:
             self.set_status(f"The {name} window is already open.")
             return proc
-        cmd = [sys.executable, "-m", module]
+        cmd = [sys.executable, "-m", module] + (["--mute-pipe"] if mute_pipe else [])
         card = getattr(getattr(self, "sb_amp", None), "value", None)
         if card:
             cmd += ["--card", card]
@@ -1432,8 +1461,8 @@ class App:
             log_file = _open_log(f"{name}.log")
             try:
                 proc = subprocess.Popen(
-                    cmd, stdout=subprocess.DEVNULL,
-                    stderr=log_file or subprocess.DEVNULL)
+                    cmd, stdout=subprocess.PIPE if mute_pipe else subprocess.DEVNULL,
+                    stderr=log_file or subprocess.DEVNULL, text=mute_pipe)
             finally:
                 if log_file:
                     log_file.close()
@@ -1544,7 +1573,9 @@ def _open_web_session(page: ft.Page, backend: App,
         if tool is not None:
             tool.close()
         page.clean()
-        tool = tool_class(page, backend.amp_port)
+        extra = ({"on_mute": backend.set_tuner_mute}
+                 if getattr(tool_class, "wants_mute", False) else {})
+        tool = tool_class(page, backend.amp_port, **extra)
 
     def hide(e=None) -> None:
         """The tab went away: give the app back / stop listening."""

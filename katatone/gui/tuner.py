@@ -87,14 +87,22 @@ def direction_hint(reading: "pitch.Reading | None") -> tuple[str, str]:
 class TunerWindow:
     """The window: builds the controls and runs the capture / update loops."""
 
-    def __init__(self, page: ft.Page, card: str | None = None) -> None:
+    #: Tells the server it may pass ``on_mute`` (the Analyzer has no such option).
+    wants_mute = True
+
+    def __init__(self, page: ft.Page, card: str | None = None,
+                 on_mute=None) -> None:
         """Build the window and start listening.
 
         Args:
             page: the Flet page.
             card: ALSA card id to preselect (e.g. ``KATANA3``).
+            on_mute: called with True / False to mute / restore the amp's
+                output while tuning; None (no amp link) disables the checkbox.
         """
         self.page = page
+        self._on_mute = on_mute
+        self._muted = False
         page.title = "KataTone Tuner"
         page.bgcolor = theme.BG
         page.theme_mode = ft.ThemeMode.DARK
@@ -142,6 +150,11 @@ class TunerWindow:
                                on_resize=self._resized)
         self.strings = ft.Row([], alignment=ft.MainAxisAlignment.CENTER, spacing=8, wrap=True)
         self.status = ft.Text("", size=12, color=theme.MUTED)
+        self.mute = ft.Checkbox(
+            label="Mute the amp while tuning", value=False, disabled=on_mute is None,
+            tooltip=("Mutes the amp's output; unchecking, stopping the tuner or closing "
+                     "the window restores it" if on_mute else "No connection to the amp"),
+            on_change=lambda e: self._set_mute(bool(self.mute.value)))
         self._build_chips()
 
         page.add(ft.Column([
@@ -158,6 +171,7 @@ class TunerWindow:
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4),
                 padding=12, bgcolor=theme.KNOB_LO, border=ft.Border.all(1, theme.PANEL_EDGE),
                 border_radius=6),
+            self.mute,
             self.strings,
             ft.Text("Click a string to tune to it whatever is played; click it again for "
                     "automatic.", size=11, color=theme.MUTED),
@@ -205,6 +219,20 @@ class TunerWindow:
         self._build_chips()
         self._update(self.strings)
 
+    def _set_mute(self, mute: bool) -> None:
+        """Mute the amp (or restore it) and keep the checkbox in step."""
+        if self._on_mute is None or mute == self._muted:
+            return
+        self._muted = mute
+        self.mute.value = mute
+        self._update(self.mute)
+        try:
+            self._on_mute(mute)
+        except Exception as e:                        # noqa: BLE001
+            self._muted = False
+            self.mute.value = False
+            self._error = f"Could not change the amp's mute: {e}"
+
     # ------------------------------------------------------------ capture
 
     def _on_block(self, block: np.ndarray) -> None:
@@ -236,6 +264,7 @@ class TunerWindow:
 
     def _stop(self) -> None:
         """Stop listening."""
+        self._set_mute(False)               # stopping the tuner restores the amp
         cap, self.capture = self.capture, None
         if cap is not None:
             cap.stop()
@@ -340,9 +369,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--card", default=None)
     parser.add_argument("--web", action="store_true", default=False)
     parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--mute-pipe", action="store_true", default=False)
     opts, _ = parser.parse_known_args(sys.argv[1:] if argv is None else argv)
     windows: list[TunerWindow] = []
-    build = lambda page: windows.append(TunerWindow(page, opts.card))   # noqa: E731
+    # Started by the main window: it passes mute requests on to the amp ("MUTE 1" /
+    # "MUTE 0" lines on stdout), and restores the amp when this process ends.
+    pipe = (lambda m: print(f"MUTE {int(m)}", flush=True)) if opts.mute_pipe else None
+    build = lambda page: windows.append(TunerWindow(page, opts.card, pipe))   # noqa: E731
     if opts.web:       # a tab in the default browser instead of a window
         ft.run(main=build, view=ft.AppView.WEB_BROWSER, host="127.0.0.1", port=opts.port,
                no_cdn=True)

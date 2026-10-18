@@ -18,6 +18,11 @@ amp and shares nothing with the editor.
   and a needle on a −50…+50 cent scale (the green band is ±5 cents).  The note and
   the needle turn green when the string is in tune, and the hint says whether to tune
   up or down.  The reading is held for a moment after the string fades.
+- **Mute the amp while tuning:** a checkbox that mutes the amp's output (the same
+  preview mute as the top bar's **Preview mute**; nothing stored on the amp is
+  changed).  Unchecking it, stopping the tuner or closing the window restores the
+  sound, also if the window crashes.  It needs the amp to be connected in the main
+  window or page, and is greyed out otherwise.
 - **Strings:** one chip per string with its target frequency.  The chip nearest to
   what you play is outlined.  Click a chip to tune to that string whatever is
   played (useful for a very slack string); click it again to go back to automatic.
