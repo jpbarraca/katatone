@@ -73,16 +73,15 @@ class PatchEditor:
     # ------------------------------------------------------------------ left
 
     def _build_left(self) -> ft.Control:
-        """Build the left column: the "Amp channel" card (Panel / A1 / A2 /
-        B1 / B2 ...) above the "User patches" card (the slot list, the name
-        field and the Read / Write / Select / Clear buttons).
+        """Build the left column: the "User patches" card (the slot list, the
+        name field and the Read / Write / Select / Clear buttons).  Picking a
+        slot only chooses what Read, Write and Clear act on; Select makes the
+        amp play it.
 
         Returns:
             The container control (fixed 250 px width).
         """
         n = lambda: self.app.patch_number                      # noqa: E731
-        self.channel_box = ft.Column(spacing=6)
-        channel_card = pv.module_card("Amp channel", [self.channel_box])
         self.list_box = ft.Column(spacing=2)
         self.name_field = ft.TextField(
             label="Patch name", max_length=16, value="",
@@ -105,12 +104,11 @@ class PatchEditor:
         ], spacing=6)
         card = pv.module_card("User patches", [
             self.list_box, self.name_field, buttons, self.dirty_label])
-        for c in (channel_card, card):
-            c.width = 250
-            c.col = None
+        card.width = 250
+        card.col = None
         # Start level with the cards on the right, below the tab strip.
         return ft.Container(
-            ft.Column([channel_card, card], spacing=12),
+            ft.Column([card], spacing=12),
             width=250, padding=ft.Padding(left=0, right=0, top=_CARDS_TOP,
                                           bottom=0))
 
@@ -170,14 +168,15 @@ class PatchEditor:
         return slot.long
 
     def _on_pick(self, n: int) -> None:
-        """Slot button handler: online, read the slot's patch from the amp;
-        offline, just mark the slot that Write will store the edits in.
+        """Slot button handler: online, read the slot's patch from the amp without
+        selecting it (Select does that); offline, just mark the slot that Write
+        will store the edits in.
 
         Args:
             n: the amp slot index to pick.
         """
         if self.app.connected:
-            self.app.read_patch(n)          # selects the slot, then reads it
+            self.app.read_patch(n)          # reads the stored slot; the amp keeps playing
             return
         # Offline: just choose the slot Write will store the edits in.
         self.app.patch_number = n
@@ -213,14 +212,14 @@ class PatchEditor:
             pass  # page not yet attached (early construction)
 
     def refresh_channels(self) -> None:
-        """Repaint only the "Amp channel" card (the lit channel moved).
+        """Repaint only the slot list (the slot the amp plays moved).
 
         Cheap enough for a pedal switch: no tab rebuild and no page-wide
         update, which would re-serialize the whole editor.
         """
-        self._rebuild_channels()
+        self._rebuild_slot_list()
         try:
-            self.channel_box.update()
+            self.list_box.update()
         except RuntimeError:
             pass  # not yet attached to the page
 
@@ -249,65 +248,27 @@ class PatchEditor:
     def _rebuild_left(self) -> None:
         """Rebuild the slot list for the selected patch and sync the name
         field and the dirty hint."""
-        self._rebuild_channels()
-        self.list_box.controls = []
-        for slot in self.app.slots():
-            active = slot.index == self.app.patch_number
-            self.list_box.controls.append(self._patch_button(slot, active))
+        self._rebuild_slot_list()
         self.name_field.value = self.app.patch_name()
         self._update_dirty()
 
-    def _rebuild_channels(self) -> None:
-        """Rebuild the "Amp channel" card: PANEL on its own row, then one row
-        of channel buttons per bank; the channel the amp plays is lit."""
-        all_slots = self.app.slots()
-        rows = [[s for s in all_slots if s.bank is None]]
-        rows += [[s for s in all_slots if s.bank == bank]
-                 for bank in slots.BANKS]
-        self.channel_box.controls = [
-            ft.Row([self._channel_button(s) for s in row], spacing=6)
-            for row in rows if row]
+    def _rebuild_slot_list(self) -> None:
+        """The slot rows: the one shown in the editor is highlighted, and the one
+        the amp plays has its label filled."""
+        playing = self.app.amp_patch if self.app.connected else None
+        self.list_box.controls = [
+            self._patch_button(slot, slot.index == self.app.patch_number,
+                               slot.index == playing)
+            for slot in self.app.slots()]
 
-    def _channel_button(self, slot) -> ft.Container:
-        """One amp channel button (PANEL, A1, A2, ...).
-
-        Online, clicking switches the amp to that channel and reads it into
-        the editor; offline the buttons are dimmed and do nothing.
-
-        Args:
-            slot: the slot the button selects.
-
-        Returns:
-            The clickable `ft.Container`.
-        """
-        online = self.app.connected
-        active = online and slot.index == self.app.amp_patch
-        label = f"{slot.bank}{slot.ch}" if slot.bank else "PANEL"
-        if not online:
-            tip = "Connect to the amp to switch channels."
-        elif active:
-            tip = f"The amp is playing {slot.long}."
-        else:
-            tip = f"Switch the amp to {slot.long} and read it into the editor."
-        return ft.Container(
-            ft.Text(label, size=12, weight=ft.FontWeight.BOLD,
-                    color=theme.BG if active else
-                    theme.ACCENT if online else theme.MUTED),
-            expand=True, height=28, border_radius=4,
-            alignment=ft.Alignment.CENTER,
-            bgcolor=theme.ACCENT if active else None,
-            border=ft.Border.all(1, theme.ACCENT_DIM if online
-                                 else theme.PANEL_EDGE),
-            tooltip=tip,
-            on_click=(lambda e, n=slot.index: self.app.read_patch(n))
-            if online and not active else None)
-
-    def _patch_button(self, slot, active: bool) -> ft.Container:
+    def _patch_button(self, slot, active: bool, playing: bool = False) -> ft.Container:
         """One amp slot: panel label (PN, 1A, ...) + patch name.
 
         Args:
             slot: the slot to render.
-            active: whether this slot holds the selected patch number.
+            active: whether this slot is the one shown in the editor (the
+                target of Read, Write and Clear).
+            playing: whether the amp plays this slot (its label is filled).
 
         Returns:
             The clickable `ft.Container` (picking the slot on click).
@@ -317,16 +278,16 @@ class PatchEditor:
             content=ft.Row([
                 ft.Container(
                     ft.Text(slot.short, size=12, weight=ft.FontWeight.BOLD,
-                            color=theme.BG if active else theme.ACCENT),
+                            color=theme.BG if playing else theme.ACCENT),
                     width=30, height=20, border_radius=4,
                     alignment=ft.Alignment.CENTER,
-                    bgcolor=theme.ACCENT if active else None,
+                    bgcolor=theme.ACCENT if playing else None,
                     border=ft.Border.all(1, theme.ACCENT_DIM)),
                 ft.Text(self._patch_label(slot), size=13, expand=True,
                         color=theme.FOREGROUND if active else theme.MUTED,
                         no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
             ], spacing=8),
-            tooltip=f"{slot.long} (patch {n + 1})",
+            tooltip=f"{slot.long} (patch {n + 1})" + ("; the amp plays it" if playing else ""),
             bgcolor=theme.TAB_ACTIVE if active else None,
             border=ft.Border(left=ft.BorderSide(
                 3, theme.ACCENT if active else "transparent")),

@@ -586,7 +586,7 @@ class App:
         if not self._require_connected():
             return
         gen = self._new_read_request()
-        self.page.run_thread(self._read_thread, n, gen)
+        self.page.run_thread(self._read_thread, n, gen, False)
 
     def _new_read_request(self) -> int:
         """Start a new read generation, cancelling any older read or timer.
@@ -608,7 +608,8 @@ class App:
         if t is not None:
             t.cancel()
 
-    def _read_thread(self, n: int, gen: int, select: bool = True) -> None:
+    def _read_thread(self, n: int, gen: int, select: bool = True,
+                     live: bool | None = None) -> None:
         """Read slot ``n``; afterwards the editor, the slot and the amp's
         current sound are the same patch, which is what makes live edit
         meaningful.
@@ -620,8 +621,10 @@ class App:
         Args:
             n: the amp slot index (0-based).
             gen: the generation this read was started for.
-            select: select the slot on the amp first (user-initiated reads);
-                False when the amp already plays it (resync after a switch).
+            select: select the slot on the amp first; False to read the stored
+                slot without touching the amp's channel (the Read button).
+            live: whether live edit may start afterwards; None: only if the amp
+                plays this slot (a resync after a switch passes True).
         """
         from ..amp.read import read_patch
         from ..amp.write import select_patch
@@ -650,8 +653,11 @@ class App:
                     self.patch_number = n
                     self._read_pending = False
                 self._synced()
-                self.live_ready = True
-                self.set_status(f"Read {self.slot_name(n)}: {self.patch_name()!r}")
+                # Live edit only while the amp plays this slot; a slot that is only
+                # being looked at (or edited) is stored with Write, not heard.
+                self.live_ready = (self.amp_patch == n) if live is None else live
+                note = "" if self.live_ready else " (not selected on the amp)"
+                self.set_status(f"Read {self.slot_name(n)}: {self.patch_name()!r}{note}")
             except _StaleRead:
                 return                      # the newer read does the refresh
             except Exception as e:                   # noqa: BLE001
@@ -914,10 +920,10 @@ class App:
             return
         gen = self._new_read_request()
         if delay <= 0:
-            self.page.run_thread(self._read_thread, n, gen, False)
+            self.page.run_thread(self._read_thread, n, gen, False, True)
             return
         timer = threading.Timer(delay, self.page.run_thread,
-                                args=(self._read_thread, n, gen, False))
+                                args=(self._read_thread, n, gen, False, True))
         timer.daemon = True
         self._resync_timer = timer
         timer.start()
@@ -942,7 +948,7 @@ class App:
         self.set_busy(True, f"Writing {self.slot_name(n)}…")
         self.busy_writing = True
         try:
-            write_patch(self.transport, n, ps, self.patch_name() or None)
+            self._store(n, ps, self.patch_name() or None)
             self.dirty = False
             self._synced()
             self.set_status(f"Wrote {self.slot_name(n)}: {self.patch_name()!r}")
@@ -951,6 +957,24 @@ class App:
         finally:
             self.busy_writing = False
             self.refresh()
+
+    def _store(self, n: int, ps: ParamSet, name: str | None) -> None:
+        """Store a patch in slot ``n``.
+
+        The amp stores its edit buffer, so writing to the slot it plays is a plain
+        write (the editor then equals the amp); any other slot is written with the
+        amp's own sound put back afterwards: the slot is not made active.
+
+        Args:
+            n: the amp slot index (0-based).
+            ps: the ``ParamSet`` to store.
+            name: the patch name to store, or ``None`` to keep the patch's own.
+        """
+        from ..amp.write import write_patch, write_patch_keep_sound
+        if self.amp_patch is None or self.amp_patch == n:
+            write_patch(self.transport, n, ps, name)
+        else:
+            write_patch_keep_sound(self.transport, n, ps, name)
 
     def clear_patch(self, n: int) -> None:
         """Clear amp slot ``n`` on the amp in a background thread.
@@ -1004,6 +1028,8 @@ class App:
             # it when it showed that slot without unsaved edits.
             if n != self.patch_number or self.dirty:
                 self.set_live_ready(False)
+            else:
+                self.set_live_ready(True)       # the editor shows what the amp plays now
             self.amp_patch = n
             self.patch_number = n
             self.set_status(f"Selected {self.slot_name(n)} on the amp.")
@@ -1256,7 +1282,7 @@ class App:
         self.set_busy(True, f"Writing {name or 'patch'!r} to {self.slot_name(n)}…")
         self.busy_writing = True
         try:
-            write_patch(self.transport, n, ps, name or None)
+            self._store(n, ps, name or None)
             self.set_status(f"Wrote {name or 'patch'!r} to {self.slot_name(n)}.")
         except Exception as e:                       # noqa: BLE001
             self.set_status(f"Write failed: {e}")

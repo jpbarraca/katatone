@@ -138,16 +138,35 @@ def test_stale_read_finishing_late_is_discarded(app) -> None:
     assert app.patch_number == 2
 
 
-def test_user_read_selects_and_supersedes_pending_resync(app) -> None:
-    """read_patch(n) selects the slot, and cancels a resync that has not started."""
+def test_user_read_does_not_select_and_supersedes_pending_resync(app) -> None:
+    """read_patch(n) reads the stored slot without making it play, and cancels a pending resync."""
+    app.amp_patch = 1
     app.resync(1, delay=0.3)
     app.read_patch(5)
     app.page.join()
     time.sleep(0.4)                     # the cancelled timer would have fired by now
     app.page.join()
-    assert app.selects == [5]
+    assert app.selects == []            # the amp keeps its channel
     assert app.reads == [5]
-    assert app.amp_patch == 5 and app.patch_number == 5
+    assert app.amp_patch == 1 and app.patch_number == 5
+    assert not app.live_ready           # edits to a slot that is not playing are not heard
+
+
+def test_reading_the_slot_the_amp_plays_keeps_live_edit(app) -> None:
+    app.amp_patch = 4
+    app.read_patch(4)
+    app.page.join()
+    assert app.selects == [] and app.live_ready and app.patch_number == 4
+
+
+def test_select_makes_the_viewed_slot_play_and_live_again(app) -> None:
+    app.amp_patch = 1
+    app.read_patch(5)
+    app.page.join()
+    assert not app.live_ready
+    app.select_patch(5)
+    app.page.join()
+    assert app.selects == [5] and app.amp_patch == 5 and app.live_ready
 
 
 def test_live_writes_during_read_are_replayed(app) -> None:
@@ -309,3 +328,43 @@ def test_adopt_amp_patch_falls_back_on_error_or_unknown_slot(app) -> None:
     assert app.amp_patch is None and app.patch_number == 0
     app._adopt_amp_patch(_FakeT(b"\x00\x03"))
     assert app.amp_patch is None and app.patch_number == 0
+
+
+def _record_writes(monkeypatch):
+    steps = []
+    monkeypatch.setattr("katatone.amp.write.write_patch",
+                        lambda t, n, ps, name=None: steps.append(("write", n)))
+    monkeypatch.setattr("katatone.amp.write.write_patch_keep_sound",
+                        lambda t, n, ps, name=None: steps.append(("write keeping the sound", n)))
+    monkeypatch.setattr("katatone.amp.write.select_patch",
+                        lambda t, n, settle=0.1: steps.append(("select", n)))
+    return steps
+
+
+def test_writing_the_slot_the_amp_plays_is_a_plain_write(app, monkeypatch) -> None:
+    steps = _record_writes(monkeypatch)
+    app.patch_number = app.amp_patch = 3
+    app.write_patch()
+    app.page.join()
+    assert steps == [("write", 3)] and not app.dirty
+
+
+def test_writing_another_slot_keeps_the_amps_sound_and_never_selects(app, monkeypatch) -> None:
+    steps = _record_writes(monkeypatch)
+    app.amp_patch, app.patch_number = 1, 3
+    app.write_patch()
+    app.page.join()
+    assert steps == [("write keeping the sound", 3)]
+    assert app.amp_patch == 1 and not app.dirty
+
+
+def test_sending_a_library_patch_to_a_slot_does_not_make_it_play(app, monkeypatch) -> None:
+    steps = _record_writes(monkeypatch)
+    app.amp_patch = 2
+    app.write_amp_patch(5, ParamSet(), "From library")
+    app.page.join()
+    assert steps == [("write keeping the sound", 5)] and app.amp_patch == 2
+    steps.clear()
+    app.write_amp_patch(2, ParamSet(), "Same slot")
+    app.page.join()
+    assert steps == [("write", 2)]
