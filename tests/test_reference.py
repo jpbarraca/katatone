@@ -185,3 +185,18 @@ def test_analyse_reads_a_file_end_to_end(tmp_path) -> None:
     write_wav(short, np.zeros(100, np.float32))
     with pytest.raises(ref.AudioError, match="too short"):
         ref.analyse(short)
+
+
+def test_a_reference_of_notes_reports_how_they_behave_and_what_is_played(tmp_path) -> None:
+    import wave
+    from synth import notes
+    x = notes(decay_s=0.3)
+    p = tmp_path / "riff.wav"
+    with wave.open(str(p), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)
+        w.writeframes((x * 32767).astype("<i2").tobytes())
+    r = ref.analyse(p)
+    assert r.envelope is not None and r.envelope.decay_db_s < -10
+    assert r.content is not None and set(r.content.top_notes(3)) == {"E", "A", "D"}
+    text = "\n".join(r.summary())
+    assert "attack" in text and "Plays mostly" in text

@@ -133,3 +133,36 @@ def diff_image(w: int, h: int, xs: np.ndarray, diff_db: np.ndarray, range_db: fl
     img[int(round(mid)), :] = zero
     _trace(img, xs, ys, zero, 2)
     return img
+
+
+def spectrogram_image(w: int, h: int, columns: np.ndarray, rows: np.ndarray, slots: int,
+                      min_db: float, max_db: float, color: np.ndarray) -> np.ndarray:
+    """A scrolling spectrogram: time runs to the right (the newest column at the right
+    edge), frequency up; brighter and more opaque is louder.
+
+    Args:
+        w, h: size in pixels.
+        columns: spectra, oldest first, one per row of the array (``n`` x points); at most
+            ``slots`` of them are used.
+        rows: for each pixel row from the top, the index of the spectrum point to show.
+        slots: how many columns the full width holds; fewer columns leave the left blank.
+        min_db, max_db: the levels shown as invisible and as full brightness.
+        color: RGBA of a loud point (it turns towards white at the top of the range).
+    Returns:
+        An (h, w, 4) uint8 array.
+    """
+    img = np.zeros((h, w, 4), dtype=np.uint8)
+    cols = np.asarray(columns)[-slots:]
+    n = len(cols)
+    if n == 0:
+        return img
+    slot = slots - 1 - ((w - 1 - np.arange(w)) * slots) // w          # time slot of each pixel column
+    have = slot >= slots - n
+    src = np.clip(slot - (slots - n), 0, n - 1)
+    levels = cols[src][:, rows].T                                    # (h, w)
+    t = np.clip((levels - min_db) / (max_db - min_db), 0.0, 1.0)
+    white = np.clip((t - 0.7) / 0.3, 0.0, 1.0)[..., None]
+    img[..., :3] = (color[:3] + (255 - color[:3]) * white).astype(np.uint8)
+    img[..., 3] = (np.power(t, 0.8) * 255).astype(np.uint8)
+    img[:, ~have] = 0
+    return img

@@ -159,6 +159,15 @@ def test_linear_spectrum_has_evenly_spaced_points_and_finds_the_tone() -> None:
     assert abs(s.freqs[int(np.argmax(spec))] - 5000) < 120
 
 
+def test_the_linear_axis_stops_at_10_khz_and_the_log_axis_at_20_khz() -> None:
+    lin, log = dsp.Spectrum(points=200, linear=True), dsp.Spectrum(points=200)
+    assert lin.freqs[-1] < dsp.F_MAX_LINEAR and lin.freqs[-1] > dsp.F_MAX_LINEAR - 100
+    assert lin.freqs[0] < 100 and log.freqs[-1] > 19000
+    assert dsp.f_max(True) == 10000.0 and dsp.f_max(False) == 20000.0
+    lin.push(sine(8000, 0.5))
+    assert abs(lin.freqs[int(np.argmax(lin.compute()))] - 8000) < 100
+
+
 def test_each_string_spans_its_open_note_to_its_highest_fret() -> None:
     from katatone.audio import bands
     rng = {name: (f_lo, top, f_hi) for name, f_lo, top, f_hi in bands.string_ranges()}
@@ -174,3 +183,16 @@ def test_note_names_wrap_octaves() -> None:
     from katatone.audio import bands
     assert bands.note_above("B3", 1) == "C4" and bands.note_above("E4", 0) == "E4"
     assert bands.note_above("G3", 22) == "F5"
+
+
+def test_history_keeps_the_newest_samples_in_order() -> None:
+    h = dsp.History(seconds=1.0, rate=10)                  # room for 10 samples
+    h.push(np.arange(4, dtype=np.float32))
+    assert list(h.last()) == [0, 1, 2, 3] and h.filled == 4
+    h.push(np.arange(4, 12, dtype=np.float32))             # wraps around
+    assert list(h.last()) == [2, 3, 4, 5, 6, 7, 8, 9, 10, 11] and h.filled == 10
+    assert list(h.last(0.3)) == [9, 10, 11]
+    h.push(np.arange(100, 130, dtype=np.float32))          # longer than the buffer
+    assert list(h.last()) == list(range(120, 130))
+    h.clear()
+    assert h.last().size == 0

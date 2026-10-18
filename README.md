@@ -21,7 +21,8 @@ window or as a browser interface, for example on a Raspberry Pi next to the amp.
 - **Tone Central** — browse and download patches from the official BOSS site
   ([details](docs/tone-central.md))
 - **Analyzer** — level meter and spectrum of the amp's USB audio, with a
-  reference recording and A/B takes to compare tones, EQ hints and tap tempo
+  reference recording and A/B takes to compare tones, with EQ settings that fit,
+  note and spectrogram analysis, and tap tempo
   ([details](docs/analyzer.md))
 - **Tuner** — a guitar tuner for the amp's audio input ([details](docs/tuner.md))
 - **System settings** — edit the amp's global settings

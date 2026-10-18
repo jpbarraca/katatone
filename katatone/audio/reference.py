@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import dsp
+from . import content as content_mod, dsp, envelope as envelope_mod
 from .capture import RATE
 
 #: Longest part of a file that is analysed.
@@ -302,12 +302,19 @@ class Reference:
     bpm: float
     bpm_confidence: float
     delays: list = field(default_factory=list)
+    envelope: "envelope_mod.Envelope | None" = None      # how its notes begin and fade
+    content: "content_mod.Content | None" = None         # which notes are played
 
     def summary(self) -> list[str]:
         """The reference's character in a few lines."""
         lines = [f"Reference: {self.name} ({self.seconds:.0f} s)",
                  f"Brightness: centre {self.centroid:.0f} Hz, slope {self.tilt:+.1f} dB/octave",
                  f"Gain: {self.gain.label.lower()} (crest factor {self.gain.crest_db:.1f} dB)"]
+        if self.envelope is not None:
+            lines.append(self.envelope.summary())
+        if self.content is not None:
+            lines.append(f"Plays mostly {', '.join(self.content.top_notes())}, "
+                         f"around {self.content.register_hz:.0f} Hz")
         if self.bpm > 0 and self.bpm_confidence >= PULSE_CONFIDENCE:
             d = ", ".join(f"{n} {ms} ms" for n, ms in self.delays[:3])
             lines.append(f"Tempo: about {self.bpm:.0f} BPM; delay: {d}")
@@ -332,4 +339,5 @@ def analyse(path: str | Path, points: int = 160, linear: bool = False,
     bpm, conf = estimate_tempo(samples, rate)
     return Reference(Path(path).name, freqs, levels, samples.size / rate,
                      centroid_hz(levels, freqs), tilt_db_per_octave(levels, freqs),
-                     gain_character(samples, rate), bpm, conf, delay_times(bpm))
+                     gain_character(samples, rate), bpm, conf, delay_times(bpm),
+                     envelope_mod.analyse(samples, rate), content_mod.analyse(samples, rate))

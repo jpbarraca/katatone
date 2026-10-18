@@ -77,3 +77,19 @@ def test_diff_image_fills_towards_the_curve_from_the_centre_line() -> None:
     assert (flat[20, :] == line).all()                          # the centre line
     clipped = plot.diff_image(100, 41, xs, np.array([99.0, 99.0]), 12.0, up, down, line)
     assert (clipped[1, 50] == line).all() or (clipped[1, 50] == up).all()   # held at the edge
+
+
+def test_spectrogram_has_the_newest_column_at_the_right_and_leaves_the_past_blank() -> None:
+    cols = np.full((3, 4), -100.0)
+    cols[-1, 2] = -20.0                                  # the newest spectrum: loud at point 2
+    rows = np.array([3, 2, 1, 0])                        # top row shows the highest point
+    img = plot.spectrogram_image(20, 4, cols, rows, slots=10, min_db=-100, max_db=-20, color=GREEN)
+    assert img.shape == (4, 20, 4)
+    assert (img[:, :14, 3] == 0).all()                   # 3 of 10 slots filled: the left is empty
+    assert img[1, -1, 3] == 255 and img[0, -1, 3] == 0   # point 2 is the second row; others quiet
+    assert (img[1, -1, :3] == 255).all()                 # full level turns white
+
+
+def test_spectrogram_without_columns_is_empty() -> None:
+    img = plot.spectrogram_image(8, 3, np.zeros((0, 4)), np.array([0, 1, 2]), 5, -100, -20, GREEN)
+    assert img.shape == (3, 8, 4) and not img.any()

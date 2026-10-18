@@ -76,8 +76,10 @@ def test_only_one_analyzer_window_at_a_time(tmp_path, monkeypatch) -> None:
 
 def test_linear_frequency_axis_is_evenly_spaced() -> None:
     assert an.freq_x(20, 1000, linear=True) == pytest.approx(0)
-    assert an.freq_x(20000, 1000, linear=True) == pytest.approx(1000)
-    assert an.freq_x(10010, 1000, linear=True) == pytest.approx(500)
+    assert an.freq_x(10000, 1000, linear=True) == pytest.approx(1000)       # the axis ends at 10 kHz
+    assert an.freq_x(20000, 1000, linear=True) == pytest.approx(1000)       # beyond it: the edge
+    assert an.freq_x(5010, 1000, linear=True) == pytest.approx(500)
+    assert an.freq_x(20000, 1000) == pytest.approx(1000)                    # the log axis still goes to 20 kHz
     # log axis puts 1 kHz well past the middle of the linear scale's first tenth
     assert an.freq_x(1000, 1000) > 500 > an.freq_x(1000, 1000, linear=True)
 
@@ -255,3 +257,144 @@ def test_tap_tempo_shows_the_bpm_and_delay_times(win, monkeypatch) -> None:
 
 def test_files_of_every_audio_type_can_be_chosen() -> None:
     assert {"wav", "mp3", "flac", "ogg"} <= set(ref_mod.AUDIO_TYPES)
+
+
+# ------------------------------------------------- notes, EQ proposals, spectrogram
+
+from synth import notes as _notes  # noqa: E402
+
+
+def _play(win, **kw):
+    """Feed notes through the same path as the capture thread."""
+    x = _notes(**kw)
+    for i in range(0, x.size, 960):
+        win._on_block(x[i:i + 960])
+
+
+def test_the_playing_is_analysed_every_few_seconds_from_the_history(win) -> None:
+    _play(win, decay_s=0.3)
+    assert win._insight.envelope is None                     # nothing analysed yet
+    win._update_insight()
+    assert win._insight.envelope is not None and win._insight.content is not None
+    first = win._insight
+    win._update_insight()                                    # too soon: left alone
+    assert win._insight is first
+    win._clear()                                             # forgets the history and the insight
+    assert win.history.filled == 0 and win._insight.envelope is None
+
+
+def test_a_take_keeps_what_was_played_and_is_checked_against_the_reference(win, tmp_path) -> None:
+    import wave
+    p = tmp_path / "riff.wav"
+    x = _notes(pitches=(64, 69, 71, 76))                     # a high lead as the reference
+    with wave.open(str(p), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(48000)
+        w.writeframes((x * 32767).astype("<i2").tobytes())
+    win._load_reference(str(p))
+    win._apply_loaded()
+    assert win.cmp.reference.envelope is not None and win.cmp.reference.content is not None
+    _play(win, pitches=(40, 45, 50, 52))
+    _heard(win)
+    win._capture("A")
+    assert win.cmp.take_insight["A"].content is not None
+    win._refresh_hints(win.smooth.avg.copy(), True, force=True)
+    texts = [c.value for c in win.hints.controls]
+    assert any("playing differs" in t for t in texts) and any("Different register" in t for t in texts)
+
+
+def test_eq_proposals_are_listed_and_previewed_on_request(win, tmp_path) -> None:
+    p = tmp_path / "part.wav"
+    _wav(p)
+    win._load_reference(str(p))
+    win._apply_loaded()
+    _heard(win)
+    avg = win.smooth.avg.copy()
+    win._refresh_hints(avg, True, force=True)
+    assert win._fits and set(win._fits) == {"GE-10", "PEQ"}
+    assert any("EQ settings that fit" in c.value for c in win.hints.controls)
+    assert win._preview_response() is None                   # off by default
+    win.eq_preview.value = "PEQ"
+    assert len(win._preview_response()) == len(win.spectrum.freqs)
+    win._draw_spectrum(avg, avg.copy())
+    win._draw_diff(avg)
+    assert "PEQ proposal" in win.diff_title.value
+    win.eq_preview.value = "off"
+    win._draw_diff(avg)
+    assert "proposal" not in win.diff_title.value
+
+
+def test_no_proposals_while_not_listening(win, tmp_path) -> None:
+    p = tmp_path / "part.wav"
+    _wav(p)
+    win._load_reference(str(p))
+    win._apply_loaded()
+    win._refresh_hints(win.smooth.avg.copy(), False, force=True)
+    assert win._fits is None
+
+
+def test_the_lower_panel_can_show_a_spectrogram_of_the_last_seconds(win) -> None:
+    assert win.lower.value == "diff"
+    for k in range(30):
+        win._columns.append(np.full(len(win.spectrum.freqs), -40.0 - k))
+    win.lower.value = "sg"
+    win._set_lower()
+    assert any(isinstance(s, an.cv.Text) and "kHz" in s.value for s in win.diff_grid.shapes)
+    win._draw_diff(win.smooth.avg.copy())
+    assert "Spectrogram" in win.diff_title.value and win.diff_img.src
+    win.lower.value = "diff"
+    win._set_lower()
+    win._draw_diff(win.smooth.avg.copy())
+    assert "Spectrogram" not in win.diff_title.value
+
+
+def test_changing_the_scale_drops_the_spectrogram_columns_and_proposals(win) -> None:
+    win._columns.append(np.zeros(len(win.spectrum.freqs)))
+    win._fits = {"PEQ": object()}
+    win.scale.value = True
+    win._set_scale()
+    assert len(win._columns) == 0 and win._fits is None
+
+
+def test_the_spectrum_is_recorded_for_the_spectrogram_each_frame_while_listening(win) -> None:
+    win._error = ""
+    win.capture = object()                                   # "listening"
+    try:
+        win._tick()
+    finally:
+        win.capture = None
+    assert len(win._columns) == 1
+
+
+# ------------------------------------------------------- the divider
+
+class _Drag:
+    def __init__(self, dy):
+        self.primary_delta = dy
+        self.local_delta = types.SimpleNamespace(y=dy)
+
+
+def test_dragging_the_divider_up_makes_the_lower_panel_taller(win) -> None:
+    assert win.lower_box.height == an.LOWER_DEFAULT
+    win._spec_size = (700.0, 400.0)
+    win._drag_divider(_Drag(-50.0))                    # up
+    assert win.lower_box.height == an.LOWER_DEFAULT + 50
+    win._drag_divider(_Drag(80.0))                     # down
+    assert win.lower_box.height == an.LOWER_DEFAULT - 30
+
+
+def test_the_lower_panel_height_stays_within_limits_and_leaves_room_for_the_spectrum(win) -> None:
+    win._spec_size = (700.0, 300.0)
+    win._set_lower_height(10_000)
+    assert win.lower_box.height == 300.0 + an.LOWER_DEFAULT - an.SPEC_MIN_HEIGHT   # spectrum keeps its minimum
+    win._set_lower_height(1)
+    assert win.lower_box.height == an.LOWER_MIN
+    win._spec_size = (700.0, 2000.0)
+    win._set_lower_height(10_000)
+    assert win.lower_box.height == an.LOWER_MAX
+
+
+def test_double_clicking_the_divider_resets_the_height(win) -> None:
+    win._spec_size = (700.0, 400.0)
+    win._set_lower_height(300)
+    win.divider.on_double_tap(None)
+    assert win.lower_box.height == an.LOWER_DEFAULT

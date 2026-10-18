@@ -12,13 +12,14 @@ import asyncio
 import sys
 import threading
 import time
+from collections import deque
 import traceback
 
 import flet as ft
 import flet.canvas as cv
 import numpy as np
 
-from ..audio import bands, comparison, dsp, reference
+from ..audio import bands, comparison, content, dsp, envelope, reference
 from ..audio.capture import RATE, Capture, CaptureError
 from ..audio.devices import list_input_devices, preferred
 from . import files, params_view as pv, plot, theme
@@ -27,7 +28,7 @@ FPS = 15
 METER_MIN_DB = -60.0
 SPEC_MIN_DB, SPEC_MAX_DB = -120.0, 0.0
 FREQ_LABELS = (20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000)
-FREQ_LABELS_LINEAR = tuple(range(2000, 20001, 2000))
+FREQ_LABELS_LINEAR = tuple(range(1000, int(dsp.F_MAX_LINEAR) + 1, 1000))
 STRING_COLOR = "#4f9d69"
 #: Colours of the held spectra drawn behind the live one, and of the difference curve.
 TRACE_COLORS = {"reference": "#6aa6ff", "A": "#8bc34a", "B": "#ba68c8"}
@@ -36,6 +37,18 @@ DIFF_ABOVE, DIFF_BELOW = "#d7a03e", "#4a90d9"
 HINT_PERIOD_S = 0.5
 #: How long a notice (a file that could not be read ...) stays on the status line.
 NOTICE_S = 8.0
+#: Seconds of playing kept for the spectrogram and for the analysis of the notes, and how
+#: often that analysis is repeated.
+HISTORY_S = 12.0
+INSIGHT_PERIOD_S = 3.0
+SPECTROGRAM_S = 15.0
+SG_MIN_DB, SG_MAX_DB = -100.0, -20.0
+#: The lower panel's height in pixels: the start value and the range the divider allows, and
+#: the least height kept for the spectrum above it.
+LOWER_DEFAULT, LOWER_MIN, LOWER_MAX, SPEC_MIN_HEIGHT = 120.0, 60.0, 600.0, 120.0
+PREVIEW_COLOR = "#ff8a65"
+EQ_KINDS = {"off": "Off", "GE-10": "Graphic EQ (GE-10)", "PEQ": "Parametric EQ (PEQ)"}
+LOWER_PANELS = {"diff": "Difference", "sg": "Spectrogram"}
 COMPARE_LABELS = {"ref": "Live vs reference", "A": "Live vs take A", "B": "Live vs take B",
                   "AB": "Take A vs take B"}
 ZONE_COLORS = ("#22d7a03e", "#228a93a0")      # alternating translucent bands
@@ -67,11 +80,12 @@ def meter_y(db: float, height: float) -> float:
 
 def freq_x(f: float, width: float, linear: bool = False) -> float:
     """Horizontal position of frequency ``f`` on the log (default) or linear
-    axis, both spanning :data:`dsp.F_MIN` to :data:`dsp.F_MAX`."""
-    f = min(dsp.F_MAX, max(dsp.F_MIN, f))
+    axis, spanning :data:`dsp.F_MIN` to :data:`dsp.F_MAX` (log) or :data:`dsp.F_MAX_LINEAR`."""
+    top = dsp.f_max(linear)
+    f = min(top, max(dsp.F_MIN, f))
     if linear:
-        return float(width * (f - dsp.F_MIN) / (dsp.F_MAX - dsp.F_MIN))
-    lo, hi = np.log10(dsp.F_MIN), np.log10(dsp.F_MAX)
+        return float(width * (f - dsp.F_MIN) / (top - dsp.F_MIN))
+    lo, hi = np.log10(dsp.F_MIN), np.log10(top)
     return float(width * (np.log10(f) - lo) / (hi - lo))
 
 
@@ -119,7 +133,7 @@ class Analyzer:
         page.title = "KataTone Analyzer"
         page.bgcolor = theme.BG
         page.theme_mode = ft.ThemeMode.DARK
-        page.window.width, page.window.height = 1100, 760
+        page.window.width, page.window.height = 1100, 820
         page.window.min_width, page.window.min_height = 720, 520
         page.padding = 12
 
@@ -136,7 +150,8 @@ class Analyzer:
         self.linear = False
         self._meter_size = (110.0, 360.0)
         self._spec_size = (700.0, 360.0)
-        self._diff_size = (700.0, 90.0)
+        self._diff_size = (700.0, LOWER_DEFAULT)
+        self._lower_height = LOWER_DEFAULT
         self.cmp = comparison.Comparison()
         self.tap = reference.TapTempo()
         self._picker = ft.FilePicker()
@@ -144,6 +159,11 @@ class Analyzer:
         self._load_error = ""
         self._hint_lines: list[str] = []
         self._hint_at = 0.0
+        self.history = dsp.History(HISTORY_S, RATE)
+        self._insight = comparison.Insight()
+        self._insight_at = 0.0
+        self._fits: dict | None = None
+        self._columns: deque = deque(maxlen=int(FPS * SPECTROGRAM_S))      # spectrogram, oldest first
         self._notice: tuple[str, str, float] = ("", theme.MUTED, 0.0)   # text, colour, until
 
         devices = list_input_devices()
@@ -163,7 +183,7 @@ class Analyzer:
         self.clear = pv.button("Clear", ft.Icons.CLEAR_ALL, lambda e: self._clear())
         self.scale = ft.Checkbox(
             label="Linear frequency scale", value=False,
-            tooltip="Off: logarithmic (default); on: linear",
+            tooltip="Off: logarithmic, 20 Hz to 20 kHz (default); on: linear, 20 Hz to 10 kHz",
             on_change=lambda e: self._set_scale())
         self.show_strings = ft.Checkbox(
             label="Guitar strings", value=False,
@@ -192,6 +212,25 @@ class Analyzer:
             label="Compare", width=190, value="ref",
             options=[ft.DropdownOption(key=k, text=v) for k, v in COMPARE_LABELS.items()],
             on_select=lambda e: self._set_compare(), **pv.FIELD_STYLE)
+        self.eq_preview = ft.Dropdown(
+            label="EQ preview", width=190, value="off",
+            options=[ft.DropdownOption(key=k, text=v) for k, v in EQ_KINDS.items()],
+            tooltip="Draws your spectrum as it would be with the proposed EQ (orange), and the "
+                    "difference that would be left",
+            on_select=lambda e: self._set_preview(), **pv.FIELD_STYLE)
+        self.lower = ft.Dropdown(
+            label="Lower panel", width=160, value="diff",
+            options=[ft.DropdownOption(key=k, text=v) for k, v in LOWER_PANELS.items()],
+            on_select=lambda e: self._set_lower(), **pv.FIELD_STYLE)
+        self.divider = ft.GestureDetector(
+            content=ft.Container(ft.Icon(ft.Icons.DRAG_HANDLE, size=14, color=theme.MUTED),
+                                 height=12, alignment=ft.Alignment.CENTER, bgcolor=theme.PANEL_EDGE,
+                                 border_radius=3,
+                                 tooltip="Drag to change the height of the spectrum and the lower "
+                                         "panel; double-click to reset"),
+            mouse_cursor=ft.MouseCursor.RESIZE_UP_DOWN, drag_interval=16,
+            on_vertical_drag_update=self._drag_divider,
+            on_double_tap=lambda e: self._set_lower_height(LOWER_DEFAULT))
         self.tap_btn = pv.button("Tap tempo", ft.Icons.TOUCH_APP, lambda e: self._tap())
         self.tap_label = ft.Text("", size=12, color=theme.FOREGROUND)
         self.hints = ft.Column([], spacing=2, scroll=ft.ScrollMode.AUTO, expand=True)
@@ -213,6 +252,7 @@ class Analyzer:
         self.meter = ft.Stack([self.meter_grid, self.meter_img], expand=True)
         self.spec = ft.Stack([self.spec_grid, self.spec_img], expand=True)
         self.diff = ft.Stack([self.diff_grid, self.diff_img], expand=True)
+        self.lower_box = ft.Container(self.diff, height=LOWER_DEFAULT)   # holds the lower panel
         page.add(ft.Column([
             ft.Container(ft.Row([self.device, self.channel, self.toggle, self.clear],
                                 spacing=8,
@@ -222,7 +262,8 @@ class Analyzer:
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Row([self.ref_btn, self.ref_label, self.ref_clear,
                     ft.Container(self.match, width=140),       # a bare labelled Checkbox fills the row
-                    self.take_a, self.take_b, self.compare_dd, self.tap_btn, self.tap_label],
+                    self.take_a, self.take_b, self.compare_dd, self.eq_preview, self.lower,
+                    self.tap_btn, self.tap_label],
                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Row([
                 ft.Container(ft.Column([self.meter, self.readout], spacing=6,
@@ -230,12 +271,13 @@ class Analyzer:
                              width=130, padding=8, bgcolor=theme.KNOB_LO,
                              border=ft.Border.all(1, theme.PANEL_EDGE), border_radius=6),
                 ft.Container(ft.Column([ft.Container(self.spec, expand=True),
+                                        self.divider,
                                         self.diff_title,
-                                        ft.Container(self.diff, height=90)], spacing=4),
+                                        self.lower_box], spacing=4),
                              expand=True, padding=8, bgcolor=theme.KNOB_LO,
                              border=ft.Border.all(1, theme.PANEL_EDGE), border_radius=6),
             ], expand=True, spacing=12),
-            ft.Container(self.hints, height=104, padding=8, bgcolor=theme.KNOB_LO,
+            ft.Container(self.hints, height=150, padding=8, bgcolor=theme.KNOB_LO,
                          border=ft.Border.all(1, theme.PANEL_EDGE), border_radius=6),
             self.status,
         ], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
@@ -253,6 +295,7 @@ class Analyzer:
         with self.lock:
             self._peak_acc = max(self._peak_acc, float(np.max(np.abs(block))))
             self.spectrum.push(block)
+            self.history.push(block)
 
     def _on_error(self, message: str) -> None:
         """Capture thread: remember the failure for the status line."""
@@ -307,6 +350,8 @@ class Analyzer:
             self.spectrum = dsp.Spectrum(RATE, points=SPEC_POINTS, linear=linear)
             self.spectrum._buf = old._buf.copy()
             self.smooth = dsp.Smoother(len(self.spectrum.freqs))
+            self._columns.clear()                  # they were on the other axis
+            self._fits = None
         self._draw_spectrum_grid()
         self._draw_diff_grid()
 
@@ -316,6 +361,9 @@ class Analyzer:
             self.smooth.reset()
             self.hold = dsp.PeakHold()
             self._clipped = False
+            self.history.clear()
+            self._columns.clear()
+        self._insight, self._insight_at = comparison.Insight(), 0.0
 
     def _resized(self, attr: str, e) -> None:
         """Canvas resize: remember the size for drawing."""
@@ -360,6 +408,7 @@ class Analyzer:
             if listening:
                 spec = self.spectrum.compute()
                 self.smooth.update(spec)
+                self._columns.append(spec)
             rms_db = dsp.levels(self.spectrum._buf[-2400:])[1] if listening else dsp.FLOOR_DB
             peak_db = dsp.to_db(peak_lin)
             held = self.hold.update(peak_db)
@@ -368,6 +417,8 @@ class Analyzer:
             clipped = self._clipped
             avg, peak = self.smooth.avg.copy(), self.smooth.peak.copy()
         self._apply_loaded()
+        if listening:
+            self._update_insight()
         self._draw_meter(rms_db, held, clipped)
         self._draw_spectrum(avg, peak)
         self._draw_diff(avg)
@@ -463,6 +514,9 @@ class Analyzer:
         peak_y = np.array([spec_y(v, h) for v in peak])
         extras = [(np.array([spec_y(v, h) for v in lv]), plot.rgba(TRACE_COLORS[name]))
                   for name, lv in self.cmp.traces(avg, self.spectrum.freqs)]
+        preview = self._preview_response()
+        if preview is not None:
+            extras.append((np.array([spec_y(v, h) for v in avg + preview]), plot.rgba(PREVIEW_COLOR)))
         img = plot.spectrum_image(w, h, xs, avg_y, peak_y, plot.rgba(theme.ACCENT),
                                   plot.rgba(theme.ACCENT_DIM), plot.rgba(theme.ACCENT, 45),
                                   extras=extras)
@@ -471,8 +525,13 @@ class Analyzer:
     # ------------------------------------------------------------ comparing
 
     def _draw_diff_grid(self) -> None:
-        """The difference panel's scale: the centre line and the dB range."""
+        """The lower panel's scale: for the difference the centre line and the dB range,
+        for the spectrogram the frequencies and the seconds."""
         w, h = self._diff_size
+        if self.lower.value == "sg":
+            self.diff_grid.shapes = self._spectrogram_grid(w, h)
+            self._update(self.diff_grid)
+            return
         shapes = [cv.Line(0, h / 2, w, h / 2, paint=_stroke(theme.PANEL_EDGE)),
                   _label(2, 1, f"+{DIFF_RANGE_DB:.0f} dB"), _label(2, h - 13, f"-{DIFF_RANGE_DB:.0f} dB")]
         for f in FREQ_LABELS_LINEAR if self.linear else FREQ_LABELS:
@@ -481,11 +540,55 @@ class Analyzer:
         self.diff_grid.shapes = shapes
         self._update(self.diff_grid)
 
-    def _draw_diff(self, avg: np.ndarray) -> None:
-        """Render the difference of the chosen comparison."""
+    def _spectrogram_grid(self, w: float, h: float) -> list:
+        """Frequency lines (horizontal) and seconds ago (vertical) of the spectrogram."""
+        shapes = []
+        for f in (100, 1000, 10000):
+            y = self._sg_y(f, h)
+            shapes.append(cv.Line(0, y, w, y, paint=_stroke(theme.PANEL_EDGE)))
+            shapes.append(_label(2, y - 13 if y > 14 else y + 1, f"{f // 1000} kHz" if f >= 1000 else f"{f} Hz"))
+        for sec in range(5, int(SPECTROGRAM_S), 5):
+            x = w * (1.0 - sec / SPECTROGRAM_S)
+            shapes.append(cv.Line(x, 0, x, h, paint=_stroke(theme.PANEL_EDGE)))
+            shapes.append(_label(x + 2, h - 13, f"-{sec} s"))
+        return shapes
+
+    def _sg_y(self, f: float, h: float) -> float:
+        """Vertical position of a frequency on the spectrogram (high at the top)."""
+        return h - freq_x(f, h, self.linear)
+
+    def _draw_spectrogram(self) -> None:
+        """Render the lower panel as a spectrogram of the last seconds."""
         w, h = (max(8, int(v)) for v in self._diff_size)
         freqs = self.spectrum.freqs
-        d = self.cmp.difference(avg, freqs)
+        ys = np.arange(h)
+        # the frequency at each pixel row, then the nearest display point
+        if self.linear:
+            f_row = dsp.F_MIN + (h - 1 - ys) / max(1, h - 1) * (dsp.F_MAX_LINEAR - dsp.F_MIN)
+        else:
+            f_row = np.geomspace(dsp.F_MIN, dsp.F_MAX, h)[::-1]
+        rows = np.abs(freqs[None, :] - f_row[:, None]).argmin(axis=1)
+        cols = np.array(self._columns) if self._columns else np.zeros((0, len(freqs)))
+        img = plot.spectrogram_image(w, h, cols, rows, self._columns.maxlen or 1,
+                                     SG_MIN_DB, SG_MAX_DB, plot.rgba(theme.ACCENT))
+        self.diff_title.value = f"Spectrogram, last {SPECTROGRAM_S:.0f} s (frequency up, newest at the right)"
+        self.diff_img.src = plot.png_bytes(img)
+
+    def _preview_response(self) -> np.ndarray | None:
+        """The response of the proposed EQ chosen for the preview, if any."""
+        kind = self.eq_preview.value
+        fit = (self._fits or {}).get(kind) if kind != "off" else None
+        return None if fit is None or len(fit.response) != len(self.spectrum.freqs) else fit.response
+
+    def _draw_diff(self, avg: np.ndarray) -> None:
+        """Render the lower panel: the difference of the chosen comparison (or the spectrogram)."""
+        if self.lower.value == "sg":
+            self._draw_spectrogram()
+            return
+        w, h = (max(8, int(v)) for v in self._diff_size)
+        freqs = self.spectrum.freqs
+        preview = self._preview_response()
+        d = self.cmp.difference(avg if preview is None else avg + preview, freqs)
         if d is None:
             img = np.zeros((2, 2, 4), dtype=np.uint8)
             self.diff_title.value = "Difference: " + self._missing_text()
@@ -493,7 +596,8 @@ class Analyzer:
             xs = np.array([freq_x(f, w, self.linear) for f in freqs])
             img = plot.diff_image(w, h, xs, d[0], DIFF_RANGE_DB, plot.rgba(DIFF_ABOVE, 70),
                                   plot.rgba(DIFF_BELOW, 70), plot.rgba(theme.POINTER, 160))
-            self.diff_title.value = (f"Difference, {d[1]} minus {d[2]} (up: {d[1]} has more)")
+            self.diff_title.value = (f"Difference, {d[1]} minus {d[2]} (up: {d[1]} has more)"
+                                     + ("" if preview is None else f", with the {self.eq_preview.value} proposal"))
         self.diff_img.src = plot.png_bytes(img)
 
     def _missing_text(self) -> str:
@@ -508,7 +612,9 @@ class Analyzer:
         if not force and now - self._hint_at < HINT_PERIOD_S:
             return
         self._hint_at = now
-        lines = self.cmp.hints(avg, self.spectrum.freqs, listening)
+        fits = self.cmp.eq_fits(avg, self.spectrum.freqs) if listening else None
+        self._fits = fits
+        lines = self.cmp.hints(avg, self.spectrum.freqs, listening, self._insight, fits)
         if lines == self._hint_lines and not force:
             return
         self._hint_lines = lines
@@ -578,7 +684,8 @@ class Analyzer:
         if float(avg.max()) <= dsp.FLOOR_DB + 1:
             self._say(f"Nothing heard yet: start listening and play, then set take {name}.")
             return
-        self.cmp.set_take(name, freqs, avg)
+        self._update_insight(force=True)
+        self.cmp.set_take(name, freqs, avg, self._insight)
         btn = self.take_a if name == "A" else self.take_b
         btn.content = ft.Text(f"Take {name} set", no_wrap=True, size=13)
         self._update(btn)
@@ -586,6 +693,42 @@ class Analyzer:
             self.cmp.mode = name
             self.compare_dd.value = name
             self._update(self.compare_dd)
+
+    def _update_insight(self, force: bool = False) -> None:
+        """Analyse the last seconds of playing (the notes, their pitch content), every few seconds."""
+        now = time.monotonic()
+        if not force and now - self._insight_at < INSIGHT_PERIOD_S:
+            return
+        self._insight_at = now
+        with self.lock:
+            x = self.history.last()
+        if x.size < RATE * content.MIN_SECONDS:
+            return
+        self._insight = comparison.Insight(envelope.analyse(x, RATE), content.analyse(x, RATE))
+
+    def _set_preview(self) -> None:
+        """The EQ preview choice changed: redraw at once."""
+        self._update(self.eq_preview)
+
+    def _drag_divider(self, e) -> None:
+        """Dragging the divider up gives the lower panel more height (and the spectrum less)."""
+        delta = e.primary_delta if e.primary_delta is not None else e.local_delta.y
+        self._set_lower_height(self._lower_height - float(delta))
+
+    def _set_lower_height(self, height: float) -> None:
+        """Set the lower panel's height, keeping the spectrum above at least :data:`SPEC_MIN_HEIGHT`."""
+        room = self._spec_size[1] + self._lower_height - SPEC_MIN_HEIGHT       # what the pair can share
+        height = max(LOWER_MIN, min(LOWER_MAX, height, max(LOWER_MIN, room)))
+        if height == self._lower_height:
+            return
+        self._lower_height = height
+        self.lower_box.height = height
+        self._update(self.lower_box)
+
+    def _set_lower(self) -> None:
+        """Switch the lower panel between the difference and the spectrogram."""
+        self._draw_diff_grid()
+        self.diff_title.value = ""
 
     def _set_compare(self) -> None:
         self.cmp.mode = self.compare_dd.value or "ref"

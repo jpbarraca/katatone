@@ -8,9 +8,11 @@ another by interpolation.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
-from . import reference as ref
+from . import content as content_mod, envelope as envelope_mod, eqfit, reference as ref
 
 #: The comparisons offered: key -> (first, second, how they read in hints).
 MODES = {
@@ -19,6 +21,14 @@ MODES = {
     "B": ("live", "B", "your tone", "take B"),
     "AB": ("A", "B", "take A", "take B"),
 }
+
+
+@dataclass(frozen=True)
+class Insight:
+    """What was learnt about the playing besides the spectrum (either part may be unknown)."""
+
+    envelope: "envelope_mod.Envelope | None" = None
+    content: "content_mod.Content | None" = None
 
 
 def resample(levels: np.ndarray, from_freqs: np.ndarray, to_freqs: np.ndarray) -> np.ndarray:
@@ -34,16 +44,30 @@ class Comparison:
     def __init__(self) -> None:
         self.reference: ref.Reference | None = None
         self.takes: dict[str, tuple[np.ndarray, np.ndarray]] = {}   # name -> (freqs, levels)
+        self.take_insight: dict[str, Insight] = {}
         self.mode = "ref"
         self.match_level = True
 
     # -- what is held ----------------------------------------------------------
-    def set_take(self, name: str, freqs: np.ndarray, levels: np.ndarray) -> None:
-        """Keep the live average spectrum as take ``name`` (``"A"`` or ``"B"``)."""
+    def set_take(self, name: str, freqs: np.ndarray, levels: np.ndarray,
+                 insight: "Insight | None" = None) -> None:
+        """Keep the live average spectrum (and what was learnt of the playing) as take
+        ``name`` (``"A"`` or ``"B"``)."""
         self.takes[name] = (freqs.copy(), levels.copy())
+        self.take_insight[name] = insight or Insight()
 
     def clear_take(self, name: str) -> None:
         self.takes.pop(name, None)
+        self.take_insight.pop(name, None)
+
+    def _insight(self, name: str, live: "Insight | None") -> "Insight | None":
+        """What is known of the playing behind ``name`` (``"live"``, ``"reference"``, a take)."""
+        if name == "live":
+            return live
+        if name == "reference":
+            r = self.reference
+            return None if r is None else Insight(r.envelope, r.content)
+        return self.take_insight.get(name)
 
     def available(self) -> list[str]:
         """The comparisons that can be made now."""
@@ -103,8 +127,28 @@ class Comparison:
             return None
         return ref.difference(a, b, freqs, self.match_level), label1, label2
 
-    def hints(self, live: np.ndarray, freqs: np.ndarray, listening: bool) -> list[str]:
-        """The lines of the hints panel: what the reference is like, then what to turn."""
+    def eq_fits(self, live: np.ndarray, freqs: np.ndarray) -> "dict[str, eqfit.EqFit] | None":
+        """The EQ settings that would bring the live tone to the other side of the chosen
+        comparison, by kind (``"GE-10"``, ``"PEQ"``); None when it is not a live comparison
+        or something needed is missing."""
+        d = self.difference(live, freqs)
+        if d is None or MODES[self.mode][0] != "live":
+            return None
+        return eqfit.fit_all(-d[0], freqs)
+
+    def hints(self, live: np.ndarray, freqs: np.ndarray, listening: bool,
+              insight: "Insight | None" = None,
+              fits: "dict[str, eqfit.EqFit] | None" = None) -> list[str]:
+        """The lines of the hints panel: what the reference is like, whether the two sides
+        are played alike, how the notes differ, what to turn and the EQ settings that fit.
+
+        Args:
+            live: the live average spectrum.
+            freqs: its frequencies.
+            listening: whether the analyzer is listening now.
+            insight: what is known of the live playing.
+            fits: the result of :meth:`eq_fits`, if wanted.
+        """
         lines = list(self.reference.summary()) if self.reference else []
         d = self.difference(live, freqs)
         if d is None:
@@ -114,5 +158,19 @@ class Comparison:
         if self.mode != "AB" and not listening:
             return lines + ["Start listening and play to get hints against this comparison."]
         diff, first, second = d
-        return lines + ["", f"To bring {first} towards {second}:"] + \
+        key = self.mode
+        a = self._insight(MODES[key][0], insight)
+        b = self._insight(MODES[key][1], insight)
+        notes = content_mod.warnings(a.content if a else None, b.content if b else None, first, second)
+        if notes:
+            lines += ["", "Check first: the playing differs"] + ["  " + n for n in notes]
+        lines += ["", f"To bring {first} towards {second}:"] + \
             ["  " + s for s in ref.suggestions(diff, freqs, first, second)]
+        if a and b and a.envelope and b.envelope:
+            lines += ["  " + n for n in envelope_mod.compare(a.envelope, b.envelope, first, second)]
+        if fits:
+            lines += ["", "EQ settings that fit (starting points to listen to):"]
+            for kind in ("GE-10", "PEQ"):
+                if kind in fits:
+                    lines += ["  " + ln if i == 0 else "    " + ln.strip() for i, ln in enumerate(fits[kind].lines())]
+        return lines

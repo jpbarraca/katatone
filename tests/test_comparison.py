@@ -97,3 +97,65 @@ def test_hints_lead_with_the_reference_then_say_what_to_turn() -> None:
 def test_modes_name_the_things_compared() -> None:
     assert set(cmp_mod.MODES) == {"ref", "A", "B", "AB"}
     assert cmp_mod.MODES["AB"][:2] == ("A", "B")
+
+
+# ---------------------------------------------- playing, notes and EQ proposals
+
+from katatone.audio import content as content_mod, envelope as envelope_mod  # noqa: E402
+from synth import notes  # noqa: E402
+
+
+def insight(**kw):
+    x = notes(**kw)
+    return cmp_mod.Insight(envelope_mod.analyse(x), content_mod.analyse(x))
+
+
+def test_hints_warn_first_when_the_playing_differs() -> None:
+    c = Comparison()
+    low = insight(pitches=(40, 45, 50, 52))
+    c.reference = ref.Reference("s.wav", FREQS, levels(), 30.0, 900.0, -6.0, ref.Gain("Crunch", 10.0), 0.0, 0.0,
+                                [], low.envelope, low.content)
+    same = c.hints(levels(treble=6.0), FREQS, True, low)
+    assert not any("playing differs" in line for line in same)
+    other = c.hints(levels(treble=6.0), FREQS, True, insight(pitches=(64, 69, 71, 76)))
+    k = next(i for i, line in enumerate(other) if "playing differs" in line)
+    assert "Different register" in other[k + 1] and k < next(i for i, ln in enumerate(other) if ln.startswith("To bring"))
+
+
+def test_hints_say_how_the_notes_differ() -> None:
+    c = Comparison()
+    ref_in = insight(decay_s=0.6)
+    c.reference = ref.Reference("s.wav", FREQS, levels(), 30.0, 900.0, -6.0, ref.Gain("Crunch", 10.0), 0.0, 0.0,
+                                [], ref_in.envelope, ref_in.content)
+    lines = c.hints(levels(), FREQS, True, insight(decay_s=0.15))
+    assert any("dies away faster" in line for line in lines)
+    assert any(line.startswith("Notes (") for line in lines)                       # the reference's own line
+
+
+def test_eq_fits_follow_the_difference_and_only_for_live_comparisons() -> None:
+    c = Comparison()
+    c.reference = reference_with(levels(treble=-6.0))        # the reference is duller than the live tone
+    live = levels()
+    fits = c.eq_fits(live, FREQS)
+    assert set(fits) == {"GE-10", "PEQ"} and all(f.useful for f in fits.values())
+    assert fits["GE-10"].response[ref.band_mask(FREQS, 2000, 5000)].mean() < -2.0       # cut the treble
+    lines = c.hints(live, FREQS, True, None, fits)
+    assert any("EQ settings that fit" in line for line in lines)
+    assert any("Graphic EQ (GE-10)" in line for line in lines) and any("Parametric EQ" in line for line in lines)
+    assert not any("EQ settings" in line for line in c.hints(live, FREQS, True, None, None))
+    c.set_take("A", FREQS, levels())
+    c.set_take("B", FREQS, levels(bass=4.0))
+    c.mode = "AB"
+    assert c.eq_fits(live, FREQS) is None                    # take A is not on the amp now
+
+
+def test_takes_remember_what_was_played() -> None:
+    c = Comparison()
+    i = insight()
+    c.set_take("A", FREQS, levels(), i)
+    c.set_take("B", FREQS, levels(), insight(pitches=(36, 43, 41, 48)))
+    c.mode = "AB"
+    lines = c.hints(levels(), FREQS, False)
+    assert any("Different notes" in line for line in lines)
+    c.clear_take("A")
+    assert "A" not in c.take_insight
