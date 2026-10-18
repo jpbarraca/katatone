@@ -12,8 +12,8 @@ import logging
 import threading
 from typing import Callable
 
-from ..protocol.alsa_seq import (InPort, PortBusyError, PortGoneError, _Daemon,
-                                 list_input_ports)
+from ..protocol.alsa_seq import InPort, PortBusyError, PortGoneError
+from ..protocol.alsa_seqport import CombinedDaemon, list_all_input_ports
 from .events import MidiEvent
 from .parser import MidiParser
 
@@ -34,8 +34,8 @@ class MidiInput:
                  on_event: Callable[[str, MidiEvent], None],
                  on_state: Callable[[str, str], None],
                  *,
-                 daemon_factory: Callable[[], _Daemon] = _Daemon,
-                 list_ports: Callable[[], list[InPort]] = list_input_ports,
+                 daemon_factory: Callable[[], CombinedDaemon] = CombinedDaemon,
+                 list_ports: Callable[[], list[InPort]] = list_all_input_ports,
                  gone_retry: float = _GONE_RETRY_S,
                  busy_retry: float = _BUSY_RETRY_S) -> None:
         """Prepare an input; nothing is opened until `start()`.
@@ -60,7 +60,7 @@ class MidiInput:
         self._parser = MidiParser()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._daemon: _Daemon | None = None
+        self._daemon: CombinedDaemon | None = None
         self._state = ""
 
     def start(self) -> None:

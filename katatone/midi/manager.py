@@ -10,7 +10,8 @@ import logging
 import threading
 from typing import Callable
 
-from ..protocol.alsa_seq import InPort, list_input_ports
+from ..protocol.alsa_seq import InPort
+from ..protocol.alsa_seqport import list_all_input_ports
 from .events import MidiEvent
 from .input import MidiInput
 from .learn import LearnResult, LearnSession
@@ -41,7 +42,7 @@ class MidiManager:
     def __init__(self, host: RouterHost, store: ProfileStore | None = None, *,
                  exclude_cards: Callable[[], set[str]] = lambda: set(),
                  input_factory=MidiInput,
-                 list_ports: Callable[[], list[InPort]] = list_input_ports) -> None:
+                 list_ports: Callable[[], list[InPort]] = list_all_input_ports) -> None:
         """Load the active profile and build the router (nothing runs yet).
 
         Args:

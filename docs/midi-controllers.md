@@ -41,3 +41,24 @@ Notes and limits:
   are not supported (use USB).
 - Run `python -m katatone.gui -v` to log every event and action
   (`katatone.midi.*`); `python dev/midi_capture.py "<name>"` prints raw events.
+
+## Bluetooth and other sequencer devices
+
+Bluetooth MIDI devices are not sound cards.  The system pairs and connects them
+(`bluetoothctl`, once; mark the device trusted), and then presents them to programs:
+
+- **PipeWire (e.g. Fedora, Raspberry Pi OS with PipeWire):** the device is a PipeWire
+  MIDI source, `bluez_midi.<address>`.  KataTone lists it in the **MIDI** tab under the
+  device's name, and **runs `pw-link` itself**: enabling the device links it to a
+  sequencer port of KataTone's own, and closing it (or switching it off) removes the
+  link.  It needs `pw-link` (package `pipewire-utils`).  If the device goes away the
+  input shows as missing and reconnects when it returns.
+- **BlueZ's MIDI bridge (no PipeWire):** the device is a port of a sequencer client;
+  KataTone lists it and subscribes to it, with no `pw-link` involved.
+
+Either way it appears next to the USB controllers and works the same way: enable it,
+learn its controls, map them.  KataTone lists the output ports of user-space
+sequencer clients and of kernel clients that are no sound card (such as
+`Midi Through`); sound cards' own clients are the USB devices it already offers, so
+nothing appears twice.  It needs `libasound` and no extra Python packages.  KataTone
+does not scan or pair: do that once with `bluetoothctl`.
