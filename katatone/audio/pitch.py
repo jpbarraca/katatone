@@ -34,6 +34,9 @@ TUNINGS = {
     "Bass (E A D G)": ("E1", "A1", "D2", "G2"),
 }
 CHROMATIC = "Chromatic"
+#: The fret whose note is an octave above the open string: where the intonation
+#: of a string is checked.
+INTONATION_FRET = 12
 #: Reference pitches offered for A4 (Hz).
 REFERENCES = (415, 430, 432, 435, 438, 440, 442, 444, 445, 450)
 
@@ -137,6 +140,8 @@ class Reading:
         target: that note's frequency (Hz).
         cents: how far above the note it is (negative: flat).
         string: index of the string in the tuning (None when chromatic).
+        fret: 0 for the open string; :data:`INTONATION_FRET` when the note
+            is measured against the octave (the intonation check).
     """
 
     freq: float
@@ -144,6 +149,7 @@ class Reading:
     target: float
     cents: float
     string: int | None
+    fret: int = 0
 
     @property
     def in_tune(self) -> bool:
@@ -152,7 +158,7 @@ class Reading:
 
 
 def measure(freq: float, tuning: "tuple[str, ...] | None", a4: float = 440.0,
-            locked: int | None = None) -> Reading:
+            locked: int | None = None, fret: int = 0) -> Reading:
     """Compare a frequency with a note.
 
     Args:
@@ -162,6 +168,9 @@ def measure(freq: float, tuning: "tuple[str, ...] | None", a4: float = 440.0,
         a4: the reference pitch.
         locked: index of a string to tune to whatever is played (None: the
             string nearest to the sound).
+        fret: compare with the note this many semitones above each open
+            string (:data:`INTONATION_FRET`: the octave, to set the intonation);
+            ignored when chromatic.
     Returns:
         The reading.
     """
@@ -170,12 +179,13 @@ def measure(freq: float, tuning: "tuple[str, ...] | None", a4: float = 440.0,
         name = midi_to_name(midi)
         target = midi_to_freq(midi, a4)
         return Reading(freq, name, target, cents_between(freq, target), None)
-    targets = [note_freq(n, a4) for n in tuning]
+    names = [midi_to_name(note_to_midi(n) + fret) for n in tuning]
+    targets = [note_freq(n, a4) for n in names]
     if locked is not None and 0 <= locked < len(tuning):
         i = locked
     else:
         i = min(range(len(tuning)), key=lambda k: abs(cents_between(freq, targets[k])))
-    return Reading(freq, tuning[i], targets[i], cents_between(freq, targets[i]), i)
+    return Reading(freq, names[i], targets[i], cents_between(freq, targets[i]), i, fret)
 
 
 class Tuner:
@@ -195,6 +205,7 @@ class Tuner:
         self.mode = mode
         self.a4 = a4
         self.locked: int | None = None
+        self.intonation = False
         self._clock = clock or time.monotonic
         self._buf = np.zeros(WINDOW, dtype=np.float32)
         self._recent: deque = deque(maxlen=5)       # last detected frequencies
@@ -209,6 +220,12 @@ class Tuner:
         """Change the tuning (or chromatic); the string lock is released."""
         self.mode = mode
         self.locked = None
+
+    @property
+    def fret(self) -> int:
+        """The fret the notes are measured at: :data:`INTONATION_FRET` while
+        checking the intonation of a tuning, else 0 (the open strings)."""
+        return INTONATION_FRET if self.intonation and self.tuning else 0
 
     def push(self, block: np.ndarray) -> None:
         """Append audio, keeping the last :data:`WINDOW` samples."""
@@ -235,4 +252,4 @@ class Tuner:
             self._last = None
             return None
         freq = self._last[0]
-        return measure(freq, self.tuning, self.a4, self.locked)
+        return measure(freq, self.tuning, self.a4, self.locked, self.fret)

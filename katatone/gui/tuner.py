@@ -5,7 +5,9 @@ from the main window's Tuner button, built like the analyzer: it only listens
 to the sound card and shares nothing with the editor.  Layout: the input
 selector along the top, the tuning and reference pitch below it, the detected
 note large in the middle with a needle showing the error in cents, and a chip
-per string (click one to tune to it whatever is played).
+per string (click one to tune to it whatever is played).  The intonation switch
+moves the targets up an octave: with the open string in tune, the note at the
+12th fret shows whether the saddle is in the right place.
 """
 from __future__ import annotations
 
@@ -78,6 +80,11 @@ def direction_hint(reading: "pitch.Reading | None") -> tuple[str, str]:
     """What to do next, as ``(text, icon name)`` (icon '' for none)."""
     if reading is None:
         return "Play a string", ""
+    if reading.fret:                  # intonation: the fretted note against the octave
+        if reading.in_tune:
+            return "Intonation is right", "CHECK_CIRCLE"
+        return ("Sharp: move the saddle back", "ARROW_DOWNWARD") if reading.cents > 0 \
+            else ("Flat: move the saddle forward", "ARROW_UPWARD")
     if reading.in_tune:
         return "In tune", "CHECK_CIRCLE"
     return ("Too low: tune up", "ARROW_UPWARD") if reading.cents < 0 \
@@ -106,8 +113,8 @@ class TunerWindow:
         page.title = "KataTone Tuner"
         page.bgcolor = theme.BG
         page.theme_mode = ft.ThemeMode.DARK
-        page.window.width, page.window.height = 640, 640
-        page.window.min_width, page.window.min_height = 480, 520
+        page.window.width, page.window.height = 640, 690
+        page.window.min_width, page.window.min_height = 480, 570
         page.padding = 12
 
         self.lock = threading.Lock()
@@ -136,6 +143,12 @@ class TunerWindow:
             options=[ft.DropdownOption(key=k, text=k)
                      for k in (*pitch.TUNINGS, pitch.CHROMATIC)],
             on_select=lambda e: self._set_mode(), **pv.FIELD_STYLE)
+        self.intonation = ft.Checkbox(
+            label="Check intonation (12th fret)", value=False,
+            tooltip=("Tune the open string first, then play the note at the 12th fret: it "
+                     "should be exactly one octave higher. Sharp: move the saddle back "
+                     "(longer string); flat: move it forward (shorter)"),
+            on_change=lambda e: self._set_intonation())
         self.reference = ft.Dropdown(
             label="Reference", width=170, value="440",
             options=[ft.DropdownOption(key=str(r), text=f"A4 = {r} Hz") for r in pitch.REFERENCES],
@@ -156,12 +169,15 @@ class TunerWindow:
                      "the window restores it" if on_mute else "No connection to the amp"),
             on_change=lambda e: self._set_mute(bool(self.mute.value)))
         self._build_chips()
+        self.help = ft.Text("", size=11, color=theme.MUTED)
+        self._set_help()
 
         page.add(ft.Column([
             ft.Container(ft.Row([self.device, self.channel, self.toggle], spacing=8,
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER),
                          padding=ft.Padding(left=0, right=0, top=8, bottom=0)),
             ft.Row([self.mode, self.reference], spacing=8),
+            self.intonation,
             ft.Container(ft.Column([
                 ft.Row([self.note], alignment=ft.MainAxisAlignment.CENTER),
                 ft.Row([self.hint_icon, self.hint], alignment=ft.MainAxisAlignment.CENTER,
@@ -173,8 +189,7 @@ class TunerWindow:
                 border_radius=6),
             self.mute,
             self.strings,
-            ft.Text("Click a string to tune to it whatever is played; click it again for "
-                    "automatic.", size=11, color=theme.MUTED),
+            self.help,
             self.status,
         ], expand=True, spacing=10))
         self._draw_meter(None, False)
@@ -186,8 +201,10 @@ class TunerWindow:
     def _build_chips(self) -> None:
         """One chip per string of the current tuning."""
         tuning = self.tuner.tuning or ()
+        fret = self.tuner.fret
         self._chips = []
         for i, name in enumerate(tuning):
+            name = pitch.midi_to_name(pitch.note_to_midi(name) + fret)
             hz = pitch.note_freq(name, self.tuner.a4)
             chip = ft.Container(
                 ft.Column([ft.Text(name, size=20, weight=ft.FontWeight.BOLD,
@@ -209,8 +226,32 @@ class TunerWindow:
         """The tuning dropdown changed."""
         with self.lock:
             self.tuner.set_mode(self.mode.value or next(iter(pitch.TUNINGS)))
+        chromatic = self.tuner.tuning is None
+        self.intonation.disabled = chromatic         # it needs strings to compare with
+        self._update(self.intonation)
+        self._refresh_strings()
+
+    def _set_intonation(self) -> None:
+        """The intonation checkbox changed: aim at the open strings or their octaves."""
+        with self.lock:
+            self.tuner.intonation = bool(self.intonation.value)
+        self._refresh_strings()
+
+    def _refresh_strings(self) -> None:
+        """Redraw the chips and the help line after the targets changed."""
         self._build_chips()
+        self._set_help()
         self._update(self.strings)
+        self._update(self.help)
+
+    def _set_help(self) -> None:
+        """The hint under the chips, for the current check."""
+        self.help.value = (
+            "Intonation: tune the open string first, then fret the same string at the 12th "
+            "fret (not a harmonic) and move the saddle until it reads in tune. "
+            "Click a string to stay on it."
+            if self.tuner.fret else
+            "Click a string to tune to it whatever is played; click it again for automatic.")
 
     def _set_reference(self) -> None:
         """The reference pitch changed."""

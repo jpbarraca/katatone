@@ -39,6 +39,14 @@ def test_the_hint_says_which_way_to_turn() -> None:
     assert tn.direction_hint(pitch.measure(115, std)) == ("Too high: tune down", "ARROW_DOWNWARD")
 
 
+def test_the_intonation_hint_says_which_way_to_move_the_saddle() -> None:
+    std = pitch.TUNINGS["Standard (E A D G B E)"]
+    octave = 220.0
+    assert tn.direction_hint(pitch.measure(octave, std, fret=12)) == ("Intonation is right", "CHECK_CIRCLE")
+    assert tn.direction_hint(pitch.measure(226, std, fret=12)) == ("Sharp: move the saddle back", "ARROW_DOWNWARD")
+    assert tn.direction_hint(pitch.measure(214, std, fret=12)) == ("Flat: move the saddle forward", "ARROW_UPWARD")
+
+
 class Page:
     def __init__(self):
         self.window = types.SimpleNamespace()
@@ -271,3 +279,31 @@ def test_in_a_browser_the_tuner_gets_the_backend_mute(monkeypatch) -> None:
     page = types.SimpleNamespace(route=f"/tuner?token={token}", clean=lambda: None)
     gui_app._open_web_session(page, backend)
     assert made == [backend.set_tuner_mute]
+
+
+# ------------------------------------------------------------ intonation
+
+def test_the_intonation_check_aims_at_the_octaves_and_relabels_the_chips(window) -> None:
+    window.intonation.value = True
+    window._set_intonation()
+    assert window.tuner.fret == 12
+    names = [c.content.controls[0].value for c in window._chips]
+    assert names == ["E3", "A3", "D4", "G4", "B4", "E5"]
+    assert window._chips[0].content.controls[1].value == f"{pitch.note_freq('E3'):.1f} Hz"
+    assert "12th" in window.help.value
+    window.apply(pitch.measure(226, pitch.TUNINGS["Standard (E A D G B E)"], fret=12), None)
+    assert window.note.value == "A3" and "move the saddle back" in window.hint.value
+    window.intonation.value = False
+    window._set_intonation()
+    assert window.tuner.fret == 0 and window._chips[0].content.controls[0].value == "E2"
+
+
+def test_the_chromatic_mode_has_no_intonation_check(window) -> None:
+    window.intonation.value = True
+    window._set_intonation()
+    window.mode.value = pitch.CHROMATIC
+    window._set_mode()
+    assert window.intonation.disabled and window.tuner.fret == 0
+    window.mode.value = "Drop D"
+    window._set_mode()
+    assert not window.intonation.disabled and window.tuner.fret == 12

@@ -156,3 +156,21 @@ def test_changing_mode_releases_the_string_lock_and_chromatic_has_no_strings() -
     assert t.tuning is None
     feed(t, tone(110.0, n=8192))
     assert t.reading().string is None
+
+
+def test_the_intonation_check_compares_with_the_octave_of_each_string() -> None:
+    std = pitch.TUNINGS["Standard (E A D G B E)"]
+    r = pitch.measure(220.0, std, fret=pitch.INTONATION_FRET)
+    assert (r.note, r.string, r.fret) == ("A3", 1, 12) and abs(r.cents) < 0.01
+    sharp = pitch.measure(220.0 * 2 ** (8 / 1200), std, fret=12)
+    assert sharp.cents == pytest.approx(8) and not sharp.in_tune
+    assert pitch.measure(220.0, None, fret=12).fret == 0           # chromatic: no octaves
+
+
+def test_the_tuner_measures_at_the_12th_fret_only_when_asked_and_not_chromatic() -> None:
+    t = pitch.Tuner()
+    assert t.fret == 0
+    t.intonation = True
+    assert t.fret == 12
+    t.set_mode(pitch.CHROMATIC)
+    assert t.fret == 0

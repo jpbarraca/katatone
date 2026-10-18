@@ -14,6 +14,13 @@ amp and shares nothing with the editor.
   down*, *DADGAD*, *Open G*, *Bass* (E A D G) or *Chromatic* (the nearest note, any
   instrument).
 - **Reference:** the pitch of A4, 415–450 Hz (440 by default).
+- **Check intonation (12th fret):** a checkbox for setting the saddles. The targets
+  move up an octave (the chips show E3 A3 D4 G4 B4 E5 for standard tuning). Tune
+  the open string first, then fret the same string at the 12th fret (a harmonic would
+  always read right) and play it: if the note is sharp the string is too short, so
+  move the saddle back; if it is flat, move the saddle forward.  Repeat, re-tuning
+  the open string each time, until it reads in tune (±5 cents).  Not available for
+  *Chromatic*.
 - **Display:** the note it hears, how many cents it is above or below that note,
   and a needle on a −50…+50 cent scale (the green band is ±5 cents).  The note and
   the needle turn green when the string is in tune, and the hint says whether to tune
