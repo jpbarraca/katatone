@@ -6,8 +6,9 @@ to the sound card and shares nothing with the editor.  Layout: the input
 selector along the top, the tuning and reference pitch below it, the detected
 note large in the middle with a needle showing the error in cents, and a chip
 per string (click one to tune to it whatever is played).  The intonation switch
-moves the targets up an octave: with the open string in tune, the note at the
-12th fret shows whether the saddle is in the right place.
+listens for both the open string and its 12th fret: the open string is tuned as
+usual and remembered, and the note at the 12th fret is compared with twice that
+pitch, which shows whether the saddle is in the right place.
 """
 from __future__ import annotations
 
@@ -76,11 +77,18 @@ def meter_shapes(width: float, height: float, cents: float | None, in_tune: bool
     return shapes
 
 
-def direction_hint(reading: "pitch.Reading | None") -> tuple[str, str]:
-    """What to do next, as ``(text, icon name)`` (icon '' for none)."""
+def direction_hint(reading: "pitch.Reading | None", intonation: bool = False) -> tuple[str, str]:
+    """What to do next, as ``(text, icon name)`` (icon '' for none).
+
+    Args:
+        reading: what the tuner heard.
+        intonation: the intonation check is on (an open string in tune is followed by the 12th fret).
+    """
     if reading is None:
         return "Play a string", ""
-    if reading.fret:                  # intonation: the fretted note against the octave
+    if intonation and not reading.fret and reading.in_tune:
+        return "Open string in tune: now play the 12th fret", "CHECK_CIRCLE"
+    if reading.fret:                  # intonation: the fretted note against the open string's octave
         if reading.in_tune:
             return "Intonation is right", "CHECK_CIRCLE"
         return ("Sharp: move the saddle back", "ARROW_DOWNWARD") if reading.cents > 0 \
@@ -89,6 +97,22 @@ def direction_hint(reading: "pitch.Reading | None") -> tuple[str, str]:
         return "In tune", "CHECK_CIRCLE"
     return ("Too low: tune up", "ARROW_UPWARD") if reading.cents < 0 \
         else ("Too high: tune down", "ARROW_DOWNWARD")
+
+
+def detail_text(reading: "pitch.Reading | None") -> str:
+    """The line under the hint: the pitch, what it is compared with and the error."""
+    if reading is None:
+        return ""
+    if not reading.fret:
+        return (f"{reading.freq:.1f} Hz   target {reading.target:.1f} Hz   "
+                f"{reading.cents:+.0f} cents")
+    if reading.open_freq is None:
+        against = (f"exact octave {reading.target:.1f} Hz "
+                   "(play the open string first to compare with it)")
+    else:
+        against = (f"twice the open string, {reading.target:.1f} Hz "
+                   f"({reading.open_freq:.1f} Hz heard {reading.open_age:.0f} s ago)")
+    return (f"12th fret {reading.freq:.1f} Hz   {against}   {reading.cents:+.0f} cents")
 
 
 class TunerWindow:
@@ -145,9 +169,9 @@ class TunerWindow:
             on_select=lambda e: self._set_mode(), **pv.FIELD_STYLE)
         self.intonation = ft.Checkbox(
             label="Check intonation (12th fret)", value=False,
-            tooltip=("Tune the open string first, then play the note at the 12th fret: it "
-                     "should be exactly one octave higher. Sharp: move the saddle back "
-                     "(longer string); flat: move it forward (shorter)"),
+            tooltip=("Play the open string and tune it, then the same string at the 12th fret: "
+                     "it should be exactly one octave higher. Both are recognised. Sharp: move "
+                     "the saddle back (longer string); flat: move it forward (shorter)"),
             on_change=lambda e: self._set_intonation())
         self.reference = ft.Dropdown(
             label="Reference", width=170, value="440",
@@ -201,17 +225,18 @@ class TunerWindow:
     def _build_chips(self) -> None:
         """One chip per string of the current tuning."""
         tuning = self.tuner.tuning or ()
-        fret = self.tuner.fret
+        check = len(self.tuner.frets) > 1               # open string and 12th fret
         self._chips = []
         for i, name in enumerate(tuning):
-            name = pitch.midi_to_name(pitch.note_to_midi(name) + fret)
             hz = pitch.note_freq(name, self.tuner.a4)
+            lines = [ft.Text(name, size=20, weight=ft.FontWeight.BOLD, color=theme.FOREGROUND),
+                     ft.Text(f"{hz:.1f} Hz", size=10, color=theme.MUTED)]
+            if check:
+                octave = pitch.midi_to_name(pitch.note_to_midi(name) + pitch.INTONATION_FRET)
+                lines.append(ft.Text(f"12th {octave} {2 * hz:.0f} Hz", size=10, color=theme.MUTED))
             chip = ft.Container(
-                ft.Column([ft.Text(name, size=20, weight=ft.FontWeight.BOLD,
-                                   color=theme.FOREGROUND),
-                           ft.Text(f"{hz:.1f} Hz", size=10, color=theme.MUTED)],
-                          spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                width=84, padding=8, border_radius=6, bgcolor=theme.PANEL_TOP,
+                ft.Column(lines, spacing=0, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                width=104 if check else 84, padding=8, border_radius=6, bgcolor=theme.PANEL_TOP,
                 border=ft.Border.all(1, theme.PANEL_EDGE),
                 on_click=lambda e, k=i: self._lock(k))
             self._chips.append(chip)
@@ -232,9 +257,10 @@ class TunerWindow:
         self._refresh_strings()
 
     def _set_intonation(self) -> None:
-        """The intonation checkbox changed: aim at the open strings or their octaves."""
+        """The intonation checkbox changed: listen for the open strings and their 12th frets, or
+        only the open strings."""
         with self.lock:
-            self.tuner.intonation = bool(self.intonation.value)
+            self.tuner.set_intonation(bool(self.intonation.value))
         self._refresh_strings()
 
     def _refresh_strings(self) -> None:
@@ -247,10 +273,11 @@ class TunerWindow:
     def _set_help(self) -> None:
         """The hint under the chips, for the current check."""
         self.help.value = (
-            "Intonation: tune the open string first, then fret the same string at the 12th "
-            "fret (not a harmonic) and move the saddle until it reads in tune. "
-            "Click a string to stay on it."
-            if self.tuner.fret else
+            "Intonation: play the open string and tune it, then fret the same string at the "
+            "12th fret (not a harmonic): it is compared with twice the open pitch. Move the "
+            "saddle and repeat both until each reads in tune. Click a string to stay on it "
+            "(needed when two strings are an octave apart, as in Drop D)."
+            if len(self.tuner.frets) > 1 else
             "Click a string to tune to it whatever is played; click it again for automatic.")
 
     def _set_reference(self) -> None:
@@ -373,13 +400,11 @@ class TunerWindow:
             IN_TUNE_COLOR if reading.in_tune else OFF_COLOR)
         self.note.value = reading.note if reading else "--"
         self.note.color = color
-        text, icon = direction_hint(reading)
+        text, icon = direction_hint(reading, len(self.tuner.frets) > 1)
         self.hint.value, self.hint.color = text, color
         self.hint_icon.icon = getattr(ft.Icons, icon) if icon else ft.Icons.MUSIC_NOTE
         self.hint_icon.color = color
-        self.detail.value = (
-            f"{reading.freq:.1f} Hz   target {reading.target:.1f} Hz   "
-            f"{reading.cents:+.0f} cents" if reading else "")
+        self.detail.value = detail_text(reading)
         self._draw_meter(reading.cents if reading else None, bool(reading and reading.in_tune))
         for i, chip in enumerate(self._chips):
             active = reading is not None and reading.string == i

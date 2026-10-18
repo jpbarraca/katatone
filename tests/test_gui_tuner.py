@@ -283,19 +283,46 @@ def test_in_a_browser_the_tuner_gets_the_backend_mute(monkeypatch) -> None:
 
 # ------------------------------------------------------------ intonation
 
-def test_the_intonation_check_aims_at_the_octaves_and_relabels_the_chips(window) -> None:
+def test_the_intonation_check_listens_for_both_frets_and_lists_both_notes_on_the_chips(window) -> None:
     window.intonation.value = True
     window._set_intonation()
-    assert window.tuner.fret == 12
+    assert window.tuner.frets == (0, 12)
     names = [c.content.controls[0].value for c in window._chips]
-    assert names == ["E3", "A3", "D4", "G4", "B4", "E5"]
-    assert window._chips[0].content.controls[1].value == f"{pitch.note_freq('E3'):.1f} Hz"
+    assert names == ["E2", "A2", "D3", "G3", "B3", "E4"]              # the open strings stay the labels
+    low = window._chips[0].content.controls
+    assert low[1].value == f"{pitch.note_freq('E2'):.1f} Hz" and low[2].value.startswith("12th E3 ")
     assert "12th" in window.help.value
-    window.apply(pitch.measure(226, pitch.TUNINGS["Standard (E A D G B E)"], fret=12), None)
+    std = pitch.TUNINGS["Standard (E A D G B E)"]
+    window.apply(pitch.measure(226, std, fret=(0, 12)), None)
     assert window.note.value == "A3" and "move the saddle back" in window.hint.value
     window.intonation.value = False
     window._set_intonation()
-    assert window.tuner.fret == 0 and window._chips[0].content.controls[0].value == "E2"
+    assert window.tuner.frets == (0,) and len(window._chips[0].content.controls) == 2
+
+
+def test_an_open_string_in_tune_is_followed_by_the_12th_fret(window) -> None:
+    std = pitch.TUNINGS["Standard (E A D G B E)"]
+    both = (0, 12)
+    assert tn.direction_hint(pitch.measure(110, std, fret=both), True) == \
+        ("Open string in tune: now play the 12th fret", "CHECK_CIRCLE")
+    assert tn.direction_hint(pitch.measure(110, std), False)[0] == "In tune"      # no check: as before
+    assert tn.direction_hint(pitch.measure(105, std, fret=both), True)[0] == "Too low: tune up"
+    window.intonation.value = True
+    window._set_intonation()
+    window.apply(pitch.measure(110, std, fret=both), None)
+    assert window.hint.value.startswith("Open string in tune") and window.note.value == "A2"
+
+
+def test_the_detail_says_what_the_12th_fret_is_compared_with() -> None:
+    std = pitch.TUNINGS["Standard (E A D G B E)"]
+    both = (0, 12)
+    assert tn.detail_text(None) == ""
+    assert tn.detail_text(pitch.measure(108, std)).startswith("108.0 Hz   target 110.0 Hz")
+    exact = tn.detail_text(pitch.measure(222, std, fret=both))
+    assert exact.startswith("12th fret 222.0 Hz") and "exact octave 220.0 Hz" in exact and "open string first" in exact
+    heard = tn.detail_text(pitch.measure(222, std, fret=both, opens={1: (109.0, 7.4)}))
+    assert "twice the open string, 218.0 Hz" in heard and "109.0 Hz heard 7 s ago" in heard
+    assert heard.endswith("+31 cents")
 
 
 def test_the_chromatic_mode_has_no_intonation_check(window) -> None:
@@ -303,7 +330,7 @@ def test_the_chromatic_mode_has_no_intonation_check(window) -> None:
     window._set_intonation()
     window.mode.value = pitch.CHROMATIC
     window._set_mode()
-    assert window.intonation.disabled and window.tuner.fret == 0
+    assert window.intonation.disabled and window.tuner.frets == (0,)
     window.mode.value = "Drop D"
     window._set_mode()
-    assert not window.intonation.disabled and window.tuner.fret == 12
+    assert not window.intonation.disabled and window.tuner.frets == (0, 12)

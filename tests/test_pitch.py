@@ -167,10 +167,91 @@ def test_the_intonation_check_compares_with_the_octave_of_each_string() -> None:
     assert pitch.measure(220.0, None, fret=12).fret == 0           # chromatic: no octaves
 
 
-def test_the_tuner_measures_at_the_12th_fret_only_when_asked_and_not_chromatic() -> None:
+def test_the_tuner_looks_for_the_open_string_and_the_12th_fret_only_when_asked_and_not_chromatic() -> None:
     t = pitch.Tuner()
-    assert t.fret == 0
-    t.intonation = True
-    assert t.fret == 12
+    assert t.frets == (0,)
+    t.set_intonation(True)
+    assert t.frets == (0, 12)
     t.set_mode(pitch.CHROMATIC)
-    assert t.fret == 0
+    assert t.frets == (0,)
+
+
+STD = pitch.TUNINGS["Standard (E A D G B E)"]
+
+
+def test_both_the_open_string_and_its_octave_are_recognised() -> None:
+    both = (0, pitch.INTONATION_FRET)
+    o = pitch.measure(110.0, STD, fret=both)
+    assert (o.note, o.string, o.fret) == ("A2", 1, 0) and abs(o.cents) < 0.01
+    t = pitch.measure(220.0, STD, fret=both)
+    assert (t.note, t.string, t.fret) == ("A3", 1, 12) and abs(t.cents) < 0.01
+    assert t.open_freq is None                          # that string was not heard
+    hi = pitch.measure(659.26, STD, fret=both)
+    assert (hi.note, hi.fret) == ("E5", 12)             # the 12th fret of the high E
+
+
+def test_the_12th_fret_is_judged_against_the_open_string_that_was_heard() -> None:
+    both = (0, pitch.INTONATION_FRET)
+    # the open A string is a little flat (108.9 Hz); its 12th fret at 220 Hz is then sharp of 2 x 108.9
+    r = pitch.measure(220.0, STD, fret=both, opens={1: (108.9, 4.0)})
+    assert r.fret == 12 and r.open_freq == 108.9 and r.open_age == 4.0
+    assert r.target == pytest.approx(217.8) and r.cents == pytest.approx(pitch.cents_between(220.0, 217.8))
+    # an octave exactly twice the open string is in tune, however flat the open string is
+    assert pitch.measure(217.8, STD, fret=both, opens={1: (108.9, 4.0)}).in_tune
+    # other strings are not affected
+    assert pitch.measure(164.81, STD, fret=both, opens={1: (108.9, 4.0)}).open_freq is None
+
+
+def test_a_locked_string_only_looks_at_its_own_notes() -> None:
+    # in drop D the 12th fret of the low D equals the open D string: locking tells them apart
+    drop_d = pitch.TUNINGS["Drop D"]
+    both = (0, pitch.INTONATION_FRET)
+    d3 = pitch.note_freq("D3")
+    assert pitch.measure(d3, drop_d, fret=both).fret == 0 and pitch.measure(d3, drop_d, fret=both).string == 2
+    r = pitch.measure(d3, drop_d, locked=0, fret=both)
+    assert (r.string, r.fret, r.note) == (0, 12, "D3")
+
+
+def _tuner_hearing(freqs, clock):
+    """A tuner fed with stubbed detections, one per call of ``reading``."""
+    t = pitch.Tuner(clock=clock)
+    t.set_intonation(True)
+    it = iter(freqs)
+    pitch_stub = lambda buf, rate, *a, **k: (next(it), 1.0)          # noqa: E731
+    return t, pitch_stub
+
+
+def test_the_tuner_remembers_the_open_string_for_the_12th_fret(monkeypatch) -> None:
+    now = [100.0]
+    t, stub = _tuner_hearing([109.0, 109.0, 109.0, 218.6, 218.6, 218.6], lambda: now[0])
+    monkeypatch.setattr(pitch, "detect_pitch", stub)
+    for _ in range(3):
+        r = t.reading()
+        now[0] += 0.1
+    assert (r.string, r.fret) == (1, 0) and r.open_freq is None
+    for _ in range(3):
+        r = t.reading()
+        now[0] += 0.1
+    assert (r.string, r.fret) == (1, 12) and r.open_freq == pytest.approx(109.0)
+    assert r.target == pytest.approx(218.0) and r.cents == pytest.approx(pitch.cents_between(218.6, 218.0))
+    assert 0.0 < r.open_age < 1.0
+
+
+def test_an_open_string_heard_long_ago_is_forgotten(monkeypatch) -> None:
+    now = [0.0]
+    t, stub = _tuner_hearing([109.0, 218.0], lambda: now[0])
+    monkeypatch.setattr(pitch, "detect_pitch", stub)
+    t.reading()
+    now[0] += pitch.OPEN_KEEP_S + 1
+    r = t.reading()
+    assert r.fret == 12 and r.open_freq is None and r.target == pytest.approx(pitch.note_freq("A3"))
+
+
+def test_switching_the_check_off_or_changing_the_tuning_forgets_the_open_strings(monkeypatch) -> None:
+    t = pitch.Tuner()
+    t._opens[1] = (109.0, 0.0)
+    t.set_intonation(False)
+    assert t._opens == {}
+    t._opens[1] = (109.0, 0.0)
+    t.set_mode("Drop D")
+    assert t._opens == {}

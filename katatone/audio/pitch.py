@@ -37,6 +37,9 @@ CHROMATIC = "Chromatic"
 #: The fret whose note is an octave above the open string: where the intonation
 #: of a string is checked.
 INTONATION_FRET = 12
+#: How long (seconds) the pitch of an open string, heard in the intonation check, is
+#: remembered for judging the 12th fret of the same string.
+OPEN_KEEP_S = 30.0
 #: Reference pitches offered for A4 (Hz).
 REFERENCES = (415, 430, 432, 435, 438, 440, 442, 444, 445, 450)
 
@@ -141,7 +144,11 @@ class Reading:
         cents: how far above the note it is (negative: flat).
         string: index of the string in the tuning (None when chromatic).
         fret: 0 for the open string; :data:`INTONATION_FRET` when the note
-            is measured against the octave (the intonation check).
+            is the 12th fret (the intonation check).
+        open_freq: for a 12th-fret note, the measured pitch of the same open
+            string it is judged against (its octave is the target); None when
+            that string was not heard, and the target is the exact octave.
+        open_age: how long ago (seconds) that open string was heard.
     """
 
     freq: float
@@ -150,6 +157,8 @@ class Reading:
     cents: float
     string: int | None
     fret: int = 0
+    open_freq: float | None = None
+    open_age: float | None = None
 
     @property
     def in_tune(self) -> bool:
@@ -158,7 +167,8 @@ class Reading:
 
 
 def measure(freq: float, tuning: "tuple[str, ...] | None", a4: float = 440.0,
-            locked: int | None = None, fret: int = 0) -> Reading:
+            locked: int | None = None, fret: "int | tuple[int, ...]" = 0,
+            opens: "dict[int, tuple[float, float]] | None" = None) -> Reading:
     """Compare a frequency with a note.
 
     Args:
@@ -169,8 +179,12 @@ def measure(freq: float, tuning: "tuple[str, ...] | None", a4: float = 440.0,
         locked: index of a string to tune to whatever is played (None: the
             string nearest to the sound).
         fret: compare with the note this many semitones above each open
-            string (:data:`INTONATION_FRET`: the octave, to set the intonation);
-            ignored when chromatic.
+            string, or with each of several (``(0, INTONATION_FRET)``: the open
+            string and its octave, to set the intonation); the nearest wins, the
+            open string if two are equally near.  Ignored when chromatic.
+        opens: ``{string: (pitch, age in seconds)}`` of open strings heard
+            lately: the 12th fret of such a string is judged against twice that
+            pitch (how well the string is intonated) and not the exact octave.
     Returns:
         The reading.
     """
@@ -179,13 +193,21 @@ def measure(freq: float, tuning: "tuple[str, ...] | None", a4: float = 440.0,
         name = midi_to_name(midi)
         target = midi_to_freq(midi, a4)
         return Reading(freq, name, target, cents_between(freq, target), None)
-    names = [midi_to_name(note_to_midi(n) + fret) for n in tuning]
-    targets = [note_freq(n, a4) for n in names]
-    if locked is not None and 0 <= locked < len(tuning):
-        i = locked
-    else:
-        i = min(range(len(tuning)), key=lambda k: abs(cents_between(freq, targets[k])))
-    return Reading(freq, names[i], targets[i], cents_between(freq, targets[i]), i, fret)
+    frets = (fret,) if isinstance(fret, int) else tuple(fret)
+    strings = [locked] if locked is not None and 0 <= locked < len(tuning) else range(len(tuning))
+    # every (string, fret) the sound could be; the frets come first so a tie goes to the lowest
+    cands = []
+    for fr in frets:
+        for i in strings:
+            name = midi_to_name(note_to_midi(tuning[i]) + fr)
+            target = note_freq(name, a4)
+            heard = (opens or {}).get(i) if fr == INTONATION_FRET else None
+            if heard is not None:
+                target = 2.0 * heard[0]
+            cands.append((abs(cents_between(freq, target)), i, fr, name, target, heard))
+    _, i, fr, name, target, heard = min(cands, key=lambda c: c[0])
+    return Reading(freq, name, target, cents_between(freq, target), i, fr,
+                   heard[0] if heard else None, heard[1] if heard else None)
 
 
 class Tuner:
@@ -206,6 +228,7 @@ class Tuner:
         self.a4 = a4
         self.locked: int | None = None
         self.intonation = False
+        self._opens: dict[int, tuple[float, float]] = {}    # string -> (open pitch, time heard)
         self._clock = clock or time.monotonic
         self._buf = np.zeros(WINDOW, dtype=np.float32)
         self._recent: deque = deque(maxlen=5)       # last detected frequencies
@@ -220,12 +243,19 @@ class Tuner:
         """Change the tuning (or chromatic); the string lock is released."""
         self.mode = mode
         self.locked = None
+        self._opens.clear()
 
     @property
-    def fret(self) -> int:
-        """The fret the notes are measured at: :data:`INTONATION_FRET` while
-        checking the intonation of a tuning, else 0 (the open strings)."""
-        return INTONATION_FRET if self.intonation and self.tuning else 0
+    def frets(self) -> "tuple[int, ...]":
+        """The frets the notes are measured at: the open string and
+        :data:`INTONATION_FRET` while checking the intonation of a tuning,
+        else only the open string."""
+        return (0, INTONATION_FRET) if self.intonation and self.tuning else (0,)
+
+    def set_intonation(self, on: bool) -> None:
+        """Switch the intonation check on or off (the open strings heard are forgotten)."""
+        self.intonation = on
+        self._opens.clear()
 
     def push(self, block: np.ndarray) -> None:
         """Append audio, keeping the last :data:`WINDOW` samples."""
@@ -252,4 +282,8 @@ class Tuner:
             self._last = None
             return None
         freq = self._last[0]
-        return measure(freq, self.tuning, self.a4, self.locked, self.fret)
+        opens = {i: (f, now - t) for i, (f, t) in self._opens.items() if now - t <= OPEN_KEEP_S}
+        r = measure(freq, self.tuning, self.a4, self.locked, self.frets, opens)
+        if len(self.frets) > 1 and r.fret == 0 and r.string is not None:
+            self._opens[r.string] = (freq, now)             # judged against by the 12th fret
+        return r
