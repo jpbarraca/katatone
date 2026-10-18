@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 
 from ..library.store import clean_name
+from ..paths import data_root
 from .mapping import Profile
 
 log = logging.getLogger("katatone.midi.store")
