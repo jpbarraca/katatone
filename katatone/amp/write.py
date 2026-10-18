@@ -56,14 +56,18 @@ def _dt1_chunked(t: Transport, addr: int, data: bytes) -> None:
 
 def write_patch(t: Transport, patch_number: int, ps: ParamSet,
                 name: str | None = None) -> None:
-    """Write a ParamSet to user patch N.
-    log.debug("writing patch %d (%d blocks)", patch_number, len(PATCH_BLOCKS))
+    """Store a ParamSet in user patch N.
+
+    The amp stores *its edit buffer* into the slot (CMDID_PATCH_WRITE N), so the
+    patch is first written into the edit buffer (region ``PATCH``).  Writing the
+    slot's own memory (``PATCH(N+1)``) is accepted by the amp but not stored: the
+    slot keeps its name and sound.  (Checked on a Katana 50 Gen 3, over USB and
+    Bluetooth.)  The edit buffer ends up holding the patch, so the amp plays it.
 
     Sequence:
-      1. DT1 patch name -> PATCH%COM of the target patch region
-      2. DT1 each patch block -> target region (device echoes DT1 per write)
-      3. CMDID_PATCH_WRITE  [N]
-      4. CMDID_EXPORT       [N]  (final confirmation)
+      1. DT1 each patch block, the name inside COM, into the edit buffer
+      2. CMDID_PATCH_WRITE  [N]  (store the edit buffer in slot N)
+      3. CMDID_EXPORT       [N]  (final confirmation)
 
     Args:
         t: the connected transport.
@@ -75,30 +79,57 @@ def write_patch(t: Transport, patch_number: int, ps: ParamSet,
     """
     if not 0 <= patch_number <= 9:
         raise ValueError("patch_number must be 0-9")
-    mp = load_map()
-    region = mp[f"PATCH({patch_number + 1})"]
+    log.debug("writing patch %d (%d blocks)", patch_number, len(PATCH_BLOCKS))
+    edit = load_map()["PATCH"]                       # the edit buffer
 
-    # 1. name
-    name_bytes = ParamSet.encode_patch_name(name or ParamSet.patch_name(
-        ps.block("PATCH%COM")) or f"PATCH {patch_number + 1}")
-    t.dt1(region.base + 0x0, name_bytes)
+    # the name lives at the start of COM
+    com = bytearray(ps.block("PATCH%COM") or bytes(edit.block("COM").length))
+    stored = name or ParamSet.patch_name(bytes(com)) or f"PATCH {patch_number + 1}"
+    encoded = ParamSet.encode_patch_name(stored)
+    com[:len(encoded)] = encoded
 
-    # 2. blocks (skip COM, already sent).  Each block is sent chunked so any
+    # 1. every block, COM first, into the edit buffer.  Each is sent chunked so any
     #    block longer than DT1_CHUNK (e.g. FX_DETAIL at 353 B) is fully written.
     for bname in PATCH_BLOCKS:
-        if bname == "COM":
-            continue
-        data = ps.block(f"PATCH%{bname}")
-        if not data:
-            continue
-        _dt1_chunked(t, region.block(bname).base_addr, data)
+        data = bytes(com) if bname == "COM" else ps.block(f"PATCH%{bname}")
+        if data:
+            _dt1_chunked(t, edit.block(bname).base_addr, data)
 
-    # 3. commit
+    # 2. store it in the slot, 3. confirm
     t.dt1(CMD_PATCH_WRITE, rc6.int2x7(patch_number))
-    time.sleep(0.2)
-
-    # 4. final confirmation
+    time.sleep(0.3)
     t.dt1(CMD_EXPORT, rc6.int2x7(patch_number))
+    time.sleep(0.3)
+
+
+def write_patch_keep_sound(t: Transport, patch_number: int, ps: ParamSet,
+                           name: str | None = None) -> None:
+    """Store a ParamSet in slot N without changing what the amp plays.
+
+    :func:`write_patch` goes through the edit buffer, which is the amp's current
+    sound.  Here the edit buffer is read first and put back afterwards (even if the
+    write fails part way), so the amp keeps its channel and its sound, unsaved
+    edits included.
+
+    Args:
+        t: the connected transport.
+        patch_number: the user patch to write, 0-9.
+        ps: the ParamSet holding the patch's `PATCH%<BLOCK>` data.
+        name: the patch name to store (None keeps the one in `ps`).
+    """
+    from .read import read_region
+    keep = read_region(t, "PATCH")                   # the sound as it is now
+    edit = load_map()["PATCH"]
+    try:
+        write_patch(t, patch_number, ps, name)
+    finally:
+        try:
+            for bname in PATCH_BLOCKS:
+                data = keep.block(f"PATCH%{bname}")
+                if data:
+                    _dt1_chunked(t, edit.block(bname).base_addr, data)
+        except Exception:                            # noqa: BLE001
+            log.warning("could not put the edit buffer back", exc_info=True)
 
 
 def clear_patch(t: Transport, patch_number: int) -> None:

@@ -65,6 +65,7 @@ class FakeAmp:
             device_id: device ID reported in the identity reply (default 0x10).
         """
         self.writes: list[tuple[int, bytes]] = []
+        self.edit_writes: dict[int, bytes] = {}      # DT1s into the edit buffer, by nibble address
         self.device_id = device_id
         # Nibble bases of the 6 KATANA FX_DETAIL blocks, used to apply the
         # single-RQ1 read wall below.  Computed lazily / cached.
@@ -149,14 +150,45 @@ class FakeAmp:
                     for i in range(0, len(data), rc6.SYSEX_MAXLEN)]
         if f.command == rc6.DT1:
             self.writes.append((nib, bytes(f.payload)))
-            if self._flat is not None:
-                off = nib - self._flat_base
-                if 0 <= off and off + len(f.payload) <= len(self._flat):
-                    self._flat[off:off + len(f.payload)] = f.payload
+            if nib == rc6.to_nib(rc6.CMD_PATCH_WRITE):
+                self._commit(f.payload[0] * 128 + f.payload[1])
+                return None
+            if self._in_edit_buffer(nib):
+                self.edit_writes[nib] = bytes(f.payload)
             else:
-                self.mem[nib] = bytearray(f.payload)
+                pass                          # a slot's own memory: not stored (see _commit)
             return None
         return None
+
+    def _in_edit_buffer(self, nib: int) -> bool:
+        """Whether ``nib`` lies in a block of the edit buffer region (``PATCH``)."""
+        edit = load_map()["PATCH"]
+        return any(rc6.to_nib(b.base_addr) <= nib < rc6.to_nib(b.base_addr) + b.length
+                   for b in edit.blocks)
+
+    def _store(self, nib: int, payload: bytes) -> None:
+        """Write ``payload`` at ``nib`` in the amp's memory."""
+        if self._flat is not None:
+            off = nib - self._flat_base
+            if 0 <= off and off + len(payload) <= len(self._flat):
+                self._flat[off:off + len(payload)] = payload
+        else:
+            self.mem[nib] = bytearray(payload)
+
+    def _commit(self, n: int) -> None:
+        """CMDID_PATCH_WRITE n: store the *edit buffer* in slot n, as the real amp
+        does.  Writes to the slot's own memory are accepted but not stored (they are
+        kept in ``writes`` only), so a test that reads a slot back proves the edit
+        buffer was written."""
+        mp = load_map()
+        edit, slot = mp["PATCH"], mp[f"PATCH({n + 1})"]
+        for nib, payload in list(self.edit_writes.items()):
+            for b in edit.blocks:
+                start = rc6.to_nib(b.base_addr)
+                if start <= nib < start + b.length:
+                    dst = rc6.to_nib(slot.block(b.name).base_addr) + (nib - start)
+                    self._store(dst, payload)
+                    break
 
 
 def make_transport(amp: FakeAmp, pace: bool = True):

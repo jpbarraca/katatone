@@ -73,32 +73,53 @@ def test_read_patch_invalid_number(transport) -> None:
 
 
 def test_write_patch_sends_expected_sequence(transport, amp: FakeAmp, region) -> None:
-    """write_patch sends the patch name, the block data, the commit and the export to the right nibble addresses."""
+    """write_patch writes the blocks (the name inside COM) into the *edit buffer*, then commits and exports."""
+    from katatone.address.map import load_map
+    edit = load_map()["PATCH"]
     ps = ParamSet()
     for name in PATCH_BLOCKS:
         ps.set_block(f"PATCH%{name}", b"\x00" * region.block(name).length)
-    ps.set_block("PATCH%COM", b"WriteTest\x00" + b"\x00" * 7)
+    ps.set_block("PATCH%COM", b"Ignored\x00" + b"\x00" * 8)
 
     write_patch(transport, 0, ps, name="WriteTest")
 
     writes = dict(amp.writes)
-    # 1. patch name -> start of region (PATCH%COM), keyed by nibble base
-    assert writes[rc6.to_nib(region.base + 0x0)] == ParamSet.encode_patch_name("WriteTest")
-    # 3. commit + 4. export
+    # 1. the name (inside COM) and every block go to the edit buffer ...
+    assert writes[rc6.to_nib(edit.block("COM").base_addr)][:16] == ParamSet.encode_patch_name("WriteTest")
+    assert rc6.to_nib(edit.block("AMP").base_addr) in writes
+    # ... and not to the slot's own memory, which the amp would ignore
+    assert rc6.to_nib(region.block("AMP").base_addr) not in writes
+    assert rc6.to_nib(region.base + 0x0) not in writes
+    # 2. commit + 3. export
     assert writes[rc6.to_nib(CMD_PATCH_WRITE)] == b"\x00\x00"
     assert writes[rc6.to_nib(CMD_EXPORT)] == b"\x00\x00"
-    # 2. at least one block write (AMP)
-    assert rc6.to_nib(region.block("AMP").base_addr) in writes
+    # the edit buffer is written before the commit
+    order = [n for n, _ in amp.writes]
+    assert order.index(rc6.to_nib(edit.block("AMP").base_addr)) < order.index(rc6.to_nib(CMD_PATCH_WRITE))
 
 
 def test_write_patch_falls_back_to_com_name(transport, amp: FakeAmp, region) -> None:
     """write_patch without an explicit name takes the patch name from the COM block."""
+    from katatone.address.map import load_map
+    edit = load_map()["PATCH"]
     ps = ParamSet()
-    ps.set_block("PATCH%COM", b"AutoName\x00" + b"\x00" * 8)
-    write_patch(transport, 0, ps)   # no explicit name; region fixture is PATCH(1)
+    ps.set_block("PATCH%COM", b"AutoName\x00" + b"\x00" * 7)
+    write_patch(transport, 0, ps)
     writes = dict(amp.writes)
-    assert writes[rc6.to_nib(region.base + 0x0)] == ParamSet.encode_patch_name("AutoName")
+    assert writes[rc6.to_nib(edit.block("COM").base_addr)][:16] == ParamSet.encode_patch_name("AutoName")
     assert writes[rc6.to_nib(CMD_PATCH_WRITE)] == b"\x00\x00"
+
+
+def test_a_written_patch_is_stored_in_the_slot_not_just_sent(transport, amp: FakeAmp, region) -> None:
+    """Regression: the amp stores its edit buffer in the slot on PATCH_WRITE; a patch sent only
+    to the slot's own memory is ignored (the slot kept its name and sound)."""
+    from katatone.address.map import load_map
+    ps = ParamSet()
+    for name in PATCH_BLOCKS:
+        ps.set_block(f"PATCH%{name}", b"\x00" * region.block(name).length)
+    write_patch(transport, 0, ps, name="Stored")
+    blk = region.block("COM")
+    assert ParamSet.patch_name(amp._read(rc6.to_nib(blk.base_addr), blk.length)) == "Stored"
 
 
 def test_select_and_clear(transport, amp: FakeAmp) -> None:
@@ -137,3 +158,27 @@ def test_write_param_rejects_out_of_range(transport, amp: FakeAmp) -> None:
     with pytest.raises(ValueError):
         write_param(transport, "AMP", 5, 101)
     assert not amp.writes
+
+
+def test_write_patch_keep_sound_puts_the_edit_buffer_back(monkeypatch) -> None:
+    """The amp's current sound is read first and written back after the slot write, even if it fails."""
+    from katatone.address.map import load_map
+    from katatone.amp import write as w
+    edit = load_map()["PATCH"]
+    keep = ParamSet()
+    keep.set_block("PATCH%AMP", b"\x07" * edit.block("AMP").length)
+    steps = []
+    monkeypatch.setattr("katatone.amp.read.read_region", lambda t, r, progress=None: (steps.append("read"), keep)[1])
+    monkeypatch.setattr(w, "_dt1_chunked", lambda t, addr, data: steps.append(("restore", addr, bytes(data)[:1])))
+
+    def fake_write(t, n, ps, name=None):
+        steps.append(("write", n, name))
+    monkeypatch.setattr(w, "write_patch", fake_write)
+    w.write_patch_keep_sound(object(), 3, ParamSet(), "Name")
+    assert steps == ["read", ("write", 3, "Name"), ("restore", edit.block("AMP").base_addr, b"\x07")]
+
+    steps.clear()
+    monkeypatch.setattr(w, "write_patch", lambda *a, **k: (_ for _ in ()).throw(OSError("link lost")))
+    with pytest.raises(OSError):
+        w.write_patch_keep_sound(object(), 3, ParamSet(), "Name")
+    assert steps[0] == "read" and steps[-1][0] == "restore"        # restored anyway
