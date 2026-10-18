@@ -14,10 +14,13 @@ import logging
 import threading
 import time
 import traceback
+import urllib.parse
 
 import flet as ft
 
 from ..address.map import load_map
+from .. import auth as auth_mod
+from .. import rofs
 from ..amp import slots
 from ..amp.live import LiveWriter
 from ..library.store import Library
@@ -25,7 +28,8 @@ from ..midi.manager import MidiManager
 from ..model.paramset import ParamSet
 from ..protocol import rc6
 from . import theme
-from . import (library_pane, midi_pane, patch_editor, statusbar, system_pane)
+from .headless import HeadlessPage
+from . import (library_pane, login, midi_pane, patch_editor, statusbar, system_pane)
 
 TAB_PATCH = "PATCH"
 TAB_SYSTEM = "SYSTEM"
@@ -42,6 +46,44 @@ PATCH_NUMBER_NIB = rc6.to_nib(0x0000_0000)
 # sends two); anything this close after our own select is an echo, not news.
 SELF_SELECT_WINDOW_S = 0.5
 RESYNC_DELAY_S = 0.15
+# Auto-connect: how often the amp's MIDI port is looked for (and its loss
+# noticed), and how long to wait after a failed attempt before the next one.
+AUTO_CONNECT_INTERVAL_S = 2.0
+AUTO_CONNECT_RETRY_S = 6.0
+# --reduce-writes: how long the file systems stay writable after start-up.
+RW_SECONDS = 120.0
+
+
+#: Whether the helper processes' output is kept in log files (``--log``).
+_log_files = False
+
+
+def _log_path(name: str):
+    """Where a helper process writes its log, or None when ``--log`` is off.
+
+    That is the data dir, or (with ``--reduce-writes``) the temporary
+    directory, which is not on the read-only file system.
+    """
+    import pathlib
+    import tempfile
+    if not _log_files:
+        return None
+    if rofs.enabled():
+        return pathlib.Path(tempfile.gettempdir()) / f"katatone-{name}"
+    from ..remote.webview import data_dir
+    return data_dir() / name
+
+
+def _open_log(name: str):
+    """Open the log file ``name`` for a helper process's stderr.
+
+    Returns:
+        The open binary file, or None when logs are off.
+    Raises:
+        OSError: if it cannot be created.
+    """
+    path = _log_path(name)
+    return open(path, "wb") if path else None
 
 
 class _StaleRead(Exception):
@@ -51,16 +93,26 @@ class _StaleRead(Exception):
 class App:
     """Holds all GUI state and orchestrates background operations."""
 
-    def __init__(self, page: ft.Page, *, start_midi: bool = True) -> None:
+    def __init__(self, page: ft.Page | None = None, *, start_midi: bool = True,
+                 wifi: bool = False) -> None:
         """Create the shared GUI state and build the whole window.
 
         Args:
             page: the Flet page this app runs on (window, event loop and
-                ``run_thread`` workers).
+                ``run_thread`` workers); None runs it headless, with no UI
+                (see :meth:`attach`).
             start_midi: open the saved MIDI controllers and start routing
                 (tests turn this off, or call :meth:`start_midi` with fakes).
+            wifi: offer the Wi-Fi settings (web mode on a device that manages
+                its own network, see ``--wifi``).
         """
-        self.page = page
+        self.page = page if page is not None else HeadlessPage()
+        self.wifi_enabled = wifi
+        self.last_status = "Ready."
+        # Lets the session that shows the app open the sound-card tools in new
+        # tabs without logging in again (see attach / _open_web_session).
+        self.launch_tokens = auth_mod.LaunchTokens()
+        self.launch_token: str | None = None
         # ---- state ----
         self.transport = None
         self.connected = False
@@ -73,6 +125,8 @@ class App:
         self.tc_proc: "subprocess.Popen | None" = None
         # Popen of the analyzer window (see open_analyzer); fully independent.
         self.an_proc: "subprocess.Popen | None" = None
+        # Popen of the guitar tuner window (see open_tuner); likewise independent.
+        self.tuner_proc: "subprocess.Popen | None" = None
         self.busy = False
         self._map = load_map()
         self.model = slots.DEFAULT_MODEL    # until the amp identifies itself
@@ -105,6 +159,13 @@ class App:
         # Card names of the connected amp (never offered as MIDI controllers).
         self._amp_ports: set[str] = set()
         self.midi: MidiManager | None = None
+        # ---- keeping the amp connected ----
+        self.auto_connect = True        # look for the amp and reconnect to it
+        self.amp_port: str | None = None            # the card we last connected to
+        self._connecting = False
+        self._auto_retry_at = 0.0
+        self._auto_thread: threading.Thread | None = None
+        self._auto_stop = threading.Event()
         self._build()
         if start_midi:
             self.start_midi()
@@ -126,7 +187,7 @@ class App:
         p.theme = ft.Theme(color_scheme_seed=theme.ACCENT)
         p.dark_theme = ft.Theme(color_scheme_seed=theme.ACCENT)
 
-        self.status_text = ft.Text("Ready.", color=theme.MUTED, size=13)
+        self.status_text = ft.Text(self.last_status, color=theme.MUTED, size=13)
         self.progress = ft.ProgressBar(visible=False, height=4,
                                           bgcolor=theme.ACCENT)
 
@@ -168,6 +229,72 @@ class App:
         ], spacing=8, expand=True))
         self.refresh()
 
+    # ------------------------------------------------------- browser sessions
+
+    @property
+    def ui_attached(self) -> bool:
+        """True while a window or browser session shows the app."""
+        return not isinstance(self.page, HeadlessPage)
+
+    def attach(self, page: ft.Page) -> None:
+        """Show the app on ``page`` (a browser session that logged in).
+
+        The state (amp link, controllers, patch) is kept; only the widgets are
+        built afresh.  A session that was attached before is told it lost the
+        app.
+
+        Args:
+            page: the session's page.
+        """
+        old = self.page
+        if old is page:
+            return
+        self._stop_midi_pane()              # the old widgets' pump, headless or not
+        self.launch_tokens.revoke(self.launch_token)
+        self.launch_token = self.launch_tokens.issue()
+        if self.ui_attached:
+            try:
+                old.clean()
+                old.add(ft.Text("KataTone is open in another session.",
+                                color=theme.MUTED))
+                old.update()
+            except Exception:                        # noqa: BLE001
+                pass            # that session is gone
+        self.page = page
+        self._rebuild_ui()
+
+    def detach(self, page: ft.Page | None = None) -> None:
+        """Stop showing the app (the session ended); everything keeps running.
+
+        Args:
+            page: the session that ended; ignored if it is no longer the one
+                attached (it was replaced by a newer session).
+        """
+        if page is not None and page is not self.page:
+            return
+        if not self.ui_attached:
+            return
+        self._stop_midi_pane()
+        self.launch_tokens.revoke(self.launch_token)
+        self.launch_token = None
+        self.page = HeadlessPage()
+        self._rebuild_ui()
+
+    def _stop_midi_pane(self) -> None:
+        """Stop the MIDI pane's UI pump (it belongs to the old widgets)."""
+        pane = getattr(self, "midi_pane", None)
+        if pane is not None:
+            pane.detach()
+
+    def _rebuild_ui(self) -> None:
+        """Build the widgets again on the current page and reconnect the MIDI
+        pane to the running controllers."""
+        self.page.clean()
+        self._build()
+        pane = getattr(self, "midi_pane", None)
+        if pane is not None and self.midi is not None:
+            pane.attach(self.midi)
+
     # ------------------------------------------------------------------ state
 
     def slots(self) -> list:
@@ -204,6 +331,9 @@ class App:
         """Set the status-line text with a targeted push (no full repaint)."""
         # Targeted push: status text only.  A full page.update() here would
         # re-serialize the entire editor tree on every call.
+        self.last_status = msg
+        if not self.ui_attached:
+            return
         self.status_text.value = msg
         self.status_text.update()
 
@@ -216,6 +346,10 @@ class App:
             msg: the status text to show (skipped if ``None``).
         """
         self.busy = busy
+        if msg:
+            self.last_status = msg
+        if not self.ui_attached:
+            return
         self.progress.visible = busy
         self.progress.update()
         if msg:
@@ -237,6 +371,8 @@ class App:
             out_port: the ALSA port name for outgoing MIDI.
         """
         self._amp_ports = {in_port, out_port}
+        self.amp_port = in_port
+        self._connecting = True
         self.page.run_thread(self._connect_thread, in_port, out_port)
 
     def _connect_thread(self, in_port: str, out_port: str) -> None:
@@ -248,6 +384,13 @@ class App:
             in_port: the ALSA port name for incoming MIDI.
             out_port: the ALSA port name for outgoing MIDI.
         """
+        try:
+            self._do_connect(in_port, out_port)
+        finally:
+            self._connecting = False
+
+    def _do_connect(self, in_port: str, out_port: str) -> None:
+        """The body of :meth:`_connect_thread`."""
         from ..amp.connect import disconnect, handshake
         from ..protocol.transport import make_alsa_transport
         self.set_busy(True, "Connecting…")
@@ -299,28 +442,114 @@ class App:
         connected)."""
         if self.transport is None:
             return
+        self.set_auto_connect(False)        # the user wants it left alone
         self.page.run_thread(self._disconnect_thread)
 
-    def _disconnect_thread(self) -> None:
+    def _disconnect_thread(self, graceful: bool = True,
+                           msg: str = "Disconnected.") -> None:
         """Worker for :meth:`disconnect`: stop the transport and clear all
-        connection state."""
+        connection state.
+
+        Args:
+            graceful: say goodbye to the amp first (not when it is gone).
+            msg: the status line to show afterwards.
+        """
         from ..amp.connect import disconnect
+        t = self.transport
+        if t is None:
+            return
         self.live.clear()
         self._cancel_resync()
-        self.transport.on_unsolicited = None
+        t.on_unsolicited = None
+        if graceful:
+            try:
+                disconnect(t)
+            except Exception:                        # noqa: BLE001
+                pass
         try:
-            disconnect(self.transport)
+            t.stop()
         except Exception:                            # noqa: BLE001
             pass
-        self.transport.stop()
         self.connected = False
         self.transport = None
         self._amp_ports = set()
         self.amp_patch = None
         self.system_ps = None  # belonged to this amp; re-read on next visit
         self.set_live_ready(False)
-        self.set_status("Disconnected.")
+        self.set_status(msg)
         self.refresh()
+
+    # ------------------------------------------------------ keeping it connected
+
+    def set_auto_connect(self, on: bool) -> None:
+        """Turn looking for the amp (and reconnecting to it) on or off.
+
+        Args:
+            on: whether to connect by itself whenever the amp's MIDI port is
+                there and nothing is connected.
+        """
+        self.auto_connect = on
+        self._auto_retry_at = 0.0
+        sw = getattr(self, "sb_auto", None)
+        if sw is not None and sw.value != on:
+            sw.value = on
+            try:
+                sw.update()
+            except RuntimeError:
+                pass                    # not on a page
+
+    def start_auto_connect(self) -> None:
+        """Start the thread that connects to the amp when it appears and
+        notices when it goes away (idempotent)."""
+        if self._auto_thread is not None:
+            return
+        self._auto_stop.clear()
+        self._auto_thread = threading.Thread(
+            target=self._auto_connect_loop, name="auto-connect", daemon=True)
+        self._auto_thread.start()
+
+    def stop_auto_connect(self) -> None:
+        """Stop the auto-connect thread."""
+        self._auto_stop.set()
+        self._auto_thread = None
+
+    def _auto_connect_loop(self) -> None:
+        """Poll the MIDI ports until stopped."""
+        from ..protocol.transport import list_alsa_ports
+        while not self._auto_stop.wait(AUTO_CONNECT_INTERVAL_S):
+            try:
+                ports = list(list_alsa_ports().get("out", []))
+                self._auto_connect_step(ports, time.monotonic())
+            except Exception:                        # noqa: BLE001
+                log.exception("auto-connect step failed")
+
+    def _auto_connect_step(self, ports: list[str], now: float) -> None:
+        """One look at the MIDI ports.
+
+        Connected and the amp's port is gone: it was unplugged or switched
+        off, so drop the link (the next steps reconnect).  Not connected,
+        auto-connect on and the amp's port there: connect, but not again for
+        :data:`AUTO_CONNECT_RETRY_S` if that fails.
+
+        Args:
+            ports: the MIDI cards present now.
+            now: a monotonic time.
+        """
+        if self.connected:
+            if self.amp_port and self.amp_port not in ports:
+                self._disconnect_thread(graceful=False, msg="Amp disconnected.")
+            return
+        if (not self.auto_connect or self._connecting or self.busy
+                or now < self._auto_retry_at):
+            return
+        taken = self.midi.enabled_cards() if self.midi is not None else set()
+        usable = [p for p in ports if p not in taken]
+        port = (self.amp_port if self.amp_port in usable else
+                next((p for p in usable if "katana" in p.lower()), None))
+        if port is None:
+            return
+        self._auto_retry_at = now + AUTO_CONNECT_RETRY_S
+        self.connect(port, port)
 
     # ------------------------------------------------------- patch operations
 
@@ -494,6 +723,26 @@ class App:
         if midi is not None:
             midi.stop()
 
+    def release(self) -> None:
+        """Give up everything the app holds: the controllers, the analyzer
+        window and the amp link (idempotent; used when a window closes or the
+        server stops)."""
+        self.stop_auto_connect()
+        self.stop_midi()
+        self.stop_analyzer()
+        t, self.transport = self.transport, None
+        self.connected = False
+        if t is not None:
+            try:
+                self.live.clear()
+                self._cancel_resync()
+                t.on_unsolicited = None
+                from ..amp.connect import disconnect
+                disconnect(t)
+            except Exception:                        # noqa: BLE001
+                pass
+            t.stop()
+
     def get_transport(self):
         """The amp transport, or None when not connected."""
         return self.transport if self.connected else None
@@ -553,7 +802,7 @@ class App:
             p_index: the parameter's index within the block.
             value: the new value.
         """
-        if self.live_ready:
+        if self.live_ready and self.ui_attached:
             self.editor.show_value(block, p_index, value)
 
     # ------------------------------------------------------- following the amp
@@ -809,6 +1058,8 @@ class App:
         the client connection (the knob then feels frozen/unresponsive).
         """
         self.dirty = True
+        if not self.ui_attached:
+            return
         self.editor.dirty_label.value = "● unsaved changes"
         self.editor.dirty_label.update()
 
@@ -819,6 +1070,8 @@ class App:
         state (progress bar; it holds live-edit sends while the wire is used).
         """
         self.busy = False
+        if not self.ui_attached:
+            return
         self.progress.visible = False
         self.editor.refresh()
         if hasattr(self, "system") and self.system is not None:
@@ -839,6 +1092,8 @@ class App:
         # patch read).  Targeted pushes keep the wire free so the UI stays
         # responsive while a read is in flight — a full page.update() per block
         # floods the client with ~3 KB tree patches and stalls all interaction.
+        if not self.ui_attached:
+            return
         self.status_text.value = f"{verb}… block {done}/{total}"
         self.status_text.update()
         self.progress.value = done / total if total else 0
@@ -1037,23 +1292,23 @@ class App:
         """
         import subprocess
         import sys
-        from ..remote.webview import data_dir
         if self.tc_proc is not None and self.tc_proc.poll() is None:
             self.set_status("Tone Exchange window is already open.")
             self.tonecentral_refresh()
             return False
         try:
-            log_file = open(data_dir() / "webview.log", "wb")
+            log_file = _open_log("webview.log")
         except OSError as e:                         # noqa: BLE001
             self.set_status(f"Tone Exchange failed to start: {e}")
             return False
         try:
             self.tc_proc = subprocess.Popen(
                 [sys.executable, "-m", "katatone.remote.webview"] + args,
-                stdout=subprocess.DEVNULL, stderr=log_file)
+                stdout=subprocess.DEVNULL, stderr=log_file or subprocess.DEVNULL)
         except Exception as e:                       # noqa: BLE001
             self.tc_proc = None
-            log_file.close()
+            if log_file:
+                log_file.close()
             self.set_status(f"Tone Exchange failed to start: {e}")
             return False
         self.set_status(busy_msg)
@@ -1076,7 +1331,8 @@ class App:
             """Report the exit, then refresh the Tone Central pane."""
             proc.wait()
             try:
-                log_file.close()
+                if log_file:
+                    log_file.close()
             except OSError:
                 pass
 
@@ -1103,13 +1359,13 @@ class App:
         Returns:
             A human-readable status line with the webview log's tail.
         """
-        from pathlib import Path
-        from ..remote.webview import data_dir
         tail = ""
+        path = _log_path("webview.log")
         try:
-            lines = Path(data_dir() / "webview.log").read_text(
-                encoding="utf-8", errors="replace").strip().splitlines()
-            tail = " ".join(l for l in lines[-2:] if l.strip())
+            if path:
+                lines = path.read_text(
+                    encoding="utf-8", errors="replace").strip().splitlines()
+                tail = " ".join(l for l in lines[-2:] if l.strip())
         except OSError:
             pass
         msg = f"Tone Exchange window exited (code {code})"
@@ -1138,63 +1394,333 @@ class App:
 
         The window shares nothing with the editor; the amp's card name is
         only passed so the right input is preselected.  Its output goes to
-        ``analyzer.log`` in the data dir.
+        ``analyzer.log`` in the data dir when ``--log`` is given (else discarded).
+        """
+        self.an_proc = self._open_tool(self.an_proc, "katatone.gui.analyzer", "analyzer",
+                                       "Analyzer")
+
+    def open_tuner(self) -> None:
+        """Open the guitar tuner window in its own process, unless it is
+        already open (it is built like the analyzer, see :meth:`open_analyzer`)."""
+        self.tuner_proc = self._open_tool(self.tuner_proc, "katatone.gui.tuner", "tuner",
+                                          "Tuner")
+
+    def _open_tool(self, proc, module: str, name: str, title: str):
+        """Start a sound-card tool window as its own process.
+
+        Only used on the desktop: a browser session opens the tool as another
+        page of the server instead (see :func:`_tool_class`).
+
+        Args:
+            proc: the tool's current process, if any.
+            module: the module to run (``python -m``).
+            name: its log's base name and the word used in status messages.
+            title: its title for status messages.
+        Returns:
+            The process now running (the old one if it was still open), or None.
         """
         import subprocess
         import sys
-        from ..remote.webview import data_dir
-        if self.an_proc is not None and self.an_proc.poll() is None:
-            self.set_status("The analyzer window is already open.")
-            return
-        cmd = [sys.executable, "-m", "katatone.gui.analyzer"]
+        if proc is not None and proc.poll() is None:
+            self.set_status(f"The {name} window is already open.")
+            return proc
+        cmd = [sys.executable, "-m", module]
         card = getattr(getattr(self, "sb_amp", None), "value", None)
         if card:
             cmd += ["--card", card]
         try:
-            with open(data_dir() / "analyzer.log", "wb") as log_file:
-                self.an_proc = subprocess.Popen(
-                    cmd, stdout=subprocess.DEVNULL, stderr=log_file)
+            log_file = _open_log(f"{name}.log")
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdout=subprocess.DEVNULL,
+                    stderr=log_file or subprocess.DEVNULL)
+            finally:
+                if log_file:
+                    log_file.close()
         except OSError as e:
-            self.an_proc = None
-            self.set_status(f"Analyzer failed to start: {e}")
-            return
-        self.set_status("Analyzer window opened.")
+            self.set_status(f"{title} failed to start: {e}")
+            return None
+        self.set_status(f"{title} window opened.")
+        return proc
 
     def stop_analyzer(self) -> None:
-        """Close the analyzer window if it is open."""
-        proc, self.an_proc = self.an_proc, None
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
+        """Close the analyzer and the tuner windows if they are open."""
+        procs = (getattr(self, "an_proc", None), getattr(self, "tuner_proc", None))
+        self.an_proc = self.tuner_proc = None
+        for proc in procs:
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+
+
+def _parse_args(argv: list[str]):
+    """Parse the GUI's own flags; unknown (Flet) arguments are ignored.
+
+    Args:
+        argv: the argument list.
+    Returns:
+        The parsed options: ``verbose``, ``web``, ``host``, ``port``, ``wifi``, ``reduce_writes``, ``log``, ``auto_connect`` and ``rw_seconds``.
+    """
+    import argparse
+    parser = argparse.ArgumentParser(prog="katatone.gui", add_help=False)
+    parser.add_argument("-v", "--verbose", action="store_true", dest="verbose",
+                        default=False)
+    parser.add_argument("--web", action="store_true", default=False)
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8550)
+    parser.add_argument("--wifi", action="store_true", default=False)
+    parser.add_argument("--reduce-writes", action="store_true", default=False)
+    parser.add_argument("--log", action="store_true", default=False)
+    parser.add_argument("--rw-seconds", type=float, default=RW_SECONDS)
+    parser.add_argument("--no-auto-connect", action="store_false", dest="auto_connect",
+                        default=True)
+    opts, _ = parser.parse_known_args(argv)
+    return opts
+
+
+def web_banner(host: str, port: int, default_password: bool = False) -> str:
+    """The text printed when the web server starts.
+
+    Args:
+        host: the address it listens on.
+        port: the port it listens on.
+        default_password: whether the factory password is still set.
+    Returns:
+        The address to open, plus a note when it is reachable from other
+        machines (the login password travels unencrypted) and when the
+        factory password is still set.
+    """
+    text = f"KataTone web GUI: http://{host}:{port}/"
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        text += (f"\nNote: listening on {host}: the login password and the "
+                 "session travel over plain HTTP; use it on a network you trust.")
+    if default_password:
+        text += (f"\nThe password is still the factory one ({auth_mod.DEFAULT_PASSWORD}); "
+                 "you will be asked to change it at the first login.")
+    return text
+
+
+def _open_window(page: ft.Page, apps: list, opts) -> None:
+    """Create the app for a new desktop window.
+
+    Args:
+        page: the window's page.
+        apps: every app created so far (released at exit).
+        opts: the parsed options (see :func:`_parse_args`).
+    """
+    app = App(page, wifi=opts.wifi)
+    apps.append(app)
+    if opts.auto_connect:
+        app.start_auto_connect()
+
+
+def _open_web_session(page: ft.Page, backend: App,
+                      auth: "auth_mod.Auth | None" = None) -> None:
+    """A browser opened the page: show the login form, and the app after it.
+
+    The app itself is the server's ``backend``, created once at start: it
+    owns the amp link and the controllers whether or not anyone is looking.
+    A session that logs in borrows it (and takes it from the previous one);
+    closing the tab, or the session timing out, gives it back and the backend
+    keeps running.  A page that reconnects (a refresh, a phone waking up)
+    gets the app again without logging in once more.
+
+    Args:
+        page: the new session's page.
+        backend: the persistent app.
+        auth: the password store (default: the device's).
+    """
+    tool_class = _tool_class(page)
+    # A tool opened from the app's own button carries a token (see
+    # LaunchTokens): that is the login.  The token is never good for the app.
+    signed_in = tool_class is not None and backend.launch_tokens.valid(_launch_token(page))
+    tool = None
+
+    def show() -> None:
+        """Put the app, or the tool this page's address names, on the page."""
+        nonlocal tool
+        if tool_class is None:
+            backend.attach(page)
+            return
+        if tool is not None:
+            tool.close()
+        page.clean()
+        tool = tool_class(page, backend.amp_port)
+
+    def hide(e=None) -> None:
+        """The tab went away: give the app back / stop listening."""
+        nonlocal tool
+        if tool_class is None:
+            backend.detach(page)
+        elif tool is not None:
+            tool.close()
+            tool = None
+
+    def start() -> None:
+        """Called by the login page once the user is in."""
+        nonlocal signed_in
+        signed_in = True
+        show()
+
+    def reconnected(e=None) -> None:
+        """The browser is back (a refresh, or another address in the same tab):
+        show what its address names now."""
+        nonlocal tool_class
+        if not signed_in:
+            return
+        wanted = _tool_class(page)
+        if wanted is not tool_class:
+            hide()
+            tool_class = wanted
+        show()
+
+    page.on_connect = reconnected
+    page.on_disconnect = hide
+    page.on_close = hide
+    if signed_in:
+        show()
+        return
+    login.LoginPage(page, auth or auth_mod.Auth(), start)
+
+
+def _launch_token(page: ft.Page) -> str | None:
+    """The ``token`` in the page's address, if any."""
+    query = urllib.parse.urlsplit(getattr(page, "route", "") or "").query
+    return (urllib.parse.parse_qs(query).get("token") or [None])[0]
+
+
+#: Sound-card tools served by the web server as pages of their own, at
+#: ``/analyzer`` and ``/tuner`` (the top bar's buttons open them in a new tab).
+TOOL_ROUTES = ("analyzer", "tuner")
+
+
+def _tool_class(page: ft.Page):
+    """The sound-card tool the page's address asks for, or None for the app.
+
+    These tools run inside the server, so a browser on another machine (a phone
+    on a Raspberry Pi's access point) can use them, behind the same login.
+
+    Args:
+        page: the session's page.
+    Returns:
+        ``Analyzer`` for ``/analyzer``, ``TunerWindow`` for ``/tuner``, else None.
+    """
+    route = urllib.parse.urlsplit(getattr(page, "route", "") or "").path.strip("/").lower()
+    if route == "analyzer":
+        from .analyzer import Analyzer
+        return Analyzer
+    if route == "tuner":
+        from .tuner import TunerWindow
+        return TunerWindow
+    return None
+
+
+def _require_web_support() -> None:
+    """Exit with install advice unless ``flet-web`` (the same version as Flet)
+    is installed; Flet would otherwise try to ``pip install`` it at start."""
+    import sys
+    try:
+        import flet.version
+        import flet_web.version
+        ok = flet_web.version.version in ("", None, flet.version.flet_version)
+    except ImportError:
+        ok = False
+    if not ok:
+        sys.exit("katatone-gui: --web needs the flet-web package, in the same "
+                 "version as flet: pip install 'katatone[web]'")
+
+
+def _end_init_after(seconds: float) -> None:
+    """Call :func:`rofs.end_init` after ``seconds``, from a background thread.
+
+    A fixed time, not an event: it works whether or not anyone ever opens the
+    page.
+
+    Args:
+        seconds: how long the file systems stay writable.
+    """
+    timer = threading.Timer(seconds, rofs.end_init)
+    timer.daemon = True
+    timer.start()
 
 
 def main(argv: list[str] | None = None) -> None:
     """Parse the CLI flags and run the Flet app.
 
+    ``--web`` serves the GUI to a browser instead of opening a desktop
+    window, on ``--host`` (default ``127.0.0.1``, this machine only) and
+    ``--port`` (default 8550); the address is printed at start.  The amp link
+    and the MIDI controllers then belong to the server, not to the browser tab:
+    they keep working with no browser open.  ``--wifi`` (with ``--web``) adds
+    the Wi-Fi settings, for a device that manages its own network through
+    NetworkManager; without it the web GUI is the same on any system and
+    touches no network settings.
+
     Args:
         argv: the argument list (defaults to ``sys.argv[1:]``); unknown
             Flet args are tolerated.
     """
-    import argparse
     import os
     import sys
     # Debug logging is OFF by default; pass -v/--verbose to trace execution
     # (mirrors the CLI).  Logs go to stderr so UI/JSON stay on stdout.
     from ..cli import _setup_logging
-    argv = sys.argv[1:] if argv is None else argv
-    parser = argparse.ArgumentParser(prog="katatone.gui", add_help=False)
-    parser.add_argument("-v", "--verbose", action="store_true", dest="verbose",
-                        default=False)
-    # Tolerate any extra/unknown Flet args without crashing.
-    opts, _ = parser.parse_known_args(argv)
+    opts = _parse_args(sys.argv[1:] if argv is None else argv)
     _setup_logging(opts.verbose)
+    rofs.enable(opts.reduce_writes)          # finds the data file system
+    global _log_files
+    _log_files = opts.log
     apps: list[App] = []
-    ft.run(main=lambda page: apps.append(App(page)))
+    if opts.wifi:
+        from ..net.wifi import Wifi
+        if not opts.web:
+            sys.exit("katatone-gui: --wifi needs --web")
+        if not Wifi.available():
+            sys.exit("katatone-gui: --wifi needs NetworkManager (nmcli), which is not installed")
+    if opts.web:
+        _require_web_support()
+    _begin_init(opts)
+    if opts.web:
+        from .headless import install_safe_update
+        install_safe_update()
+        auth = auth_mod.Auth()
+        backend = App(wifi=opts.wifi)
+        apps.append(backend)
+        backend.start_midi()
+        if opts.auto_connect:
+            backend.start_auto_connect()
+        print(web_banner(opts.host, opts.port, auth.is_default()), flush=True)
+        # no_cdn: the page loads CanvasKit and its fonts from this server, so it
+        # works on a network with no internet (the device's own access point).
+        ft.run(main=lambda page: _open_web_session(page, backend, auth),
+               view=ft.AppView.WEB_BROWSER, host=opts.host, port=opts.port,
+               no_cdn=True)
+    else:
+        ft.run(main=lambda page: _open_window(page, apps, opts))
     for app in apps:
-        app.stop_midi()
-        app.stop_analyzer()
+        app.release()
+    rofs.end_init()                 # leave the file systems read-only
     sys.stdout.flush()
     # skip atexit: alsa-lib static cleanup segfaults on PipeWire hosts
     os._exit(0)
+
+
+def _begin_init(opts) -> None:
+    """With ``--reduce-writes``: keep the file system that holds the data
+    directory read-write while the app starts up and for ``--rw-seconds`` after,
+    then put it back read-only with :func:`rofs.end_init` whether or not anyone
+    connected.
+
+    Args:
+        opts: the parsed options.
+    """
+    import sys
+    if not opts.reduce_writes:
+        return
+    try:
+        rofs.begin_init()
+    except rofs.RemountError as e:
+        sys.exit(f"katatone-gui: {e}")
+    _end_init_after(opts.rw_seconds)
 
 
 if __name__ == "__main__":

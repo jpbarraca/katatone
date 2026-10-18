@@ -66,25 +66,51 @@ def build(app: App) -> ft.Control:
     ports = _ports()
     sb_amp = ft.Dropdown(label="Amp (MIDI port)", width=210,
                          options=[_option(x) for x in ports],
-                         value=_default_port(ports), **pv.FIELD_STYLE)
+                         value=app.amp_port if app.amp_port in ports else _default_port(ports),
+                         **pv.FIELD_STYLE)
     sb_lamp = ft.Container(width=12, height=12, border_radius=6,
                            bgcolor=theme.MUTED)
     sb_connect = pv.button("Connect", ft.Icons.LINK,
                          lambda e: _on_connect(app), primary=True)
+    sb_auto = ft.Switch(
+        label="Auto", value=app.auto_connect, active_color=theme.ACCENT,
+        tooltip="Connect to the amp when it appears, and again if it comes back",
+        label_text_style=ft.TextStyle(size=11, color=theme.MUTED),
+        on_change=lambda e: app.set_auto_connect(bool(e.control.value)))
     sb_midi = ft.Container(width=10, height=10, border_radius=5, bgcolor=theme.LED_OFF,
                            border=ft.Border.all(1, theme.ACCENT_DIM),
                            tooltip="MIDI controllers: none")
     sb_patch = ft.Text("", size=13, color=theme.FOREGROUND, no_wrap=True)
+    # In a browser the tools are pages of the server, opened in a new tab by the
+    # button itself; on the desktop they are windows of their own.
+    web = bool(getattr(app.page, "web", False))
+
+    token = getattr(app, "launch_token", None)
+
+    def tool_url(route: str):
+        """The tool's link; the token lets the new tab skip the login."""
+        suffix = f"?token={token}" if token else ""
+        return ft.Url(f"/{route}{suffix}", ft.UrlTarget.BLANK) if web else None
+
     sb_analyzer = pv.button("Analyzer", ft.Icons.GRAPHIC_EQ,
-                            lambda e: app.open_analyzer())
+                            lambda e: None if web else app.open_analyzer(),
+                            url=tool_url("analyzer"))
+    sb_tuner = pv.button("Tuner", ft.Icons.MUSIC_NOTE,
+                         lambda e: None if web else app.open_tuner(),
+                         url=tool_url("tuner"))
     sb_mute = pv.button("Preview mute", ft.Icons.VOLUME_OFF,
                       lambda e: app.set_mute(True))
     sb_unmute = pv.button("Unmute", ft.Icons.VOLUME_UP,
                         lambda e: app.set_mute(False))
 
+    # Network setup is opt-in (--wifi): only for a device that manages its own network.
+    sb_wifi = (pv.button("Wi-Fi", ft.Icons.WIFI, lambda e: _on_wifi(app))
+               if getattr(app, "wifi_enabled", False) else None)
+
     app.sb_amp = sb_amp
     app.sb_lamp = sb_lamp
     app.sb_connect = sb_connect
+    app.sb_auto = sb_auto
     app.sb_patch = sb_patch
     app.sb_midi = sb_midi
     app._sb_midi_lit = False
@@ -95,12 +121,13 @@ def build(app: App) -> ft.Control:
         content=ft.Row([
             _brand(),
             ft.Container(width=1, height=36, bgcolor=theme.PANEL_EDGE),
-            sb_amp, sb_connect,
+            sb_amp, sb_connect, sb_auto,
             ft.Row([sb_lamp, sb_patch], spacing=6, tight=True),
             ft.Container(expand=True),
             ft.Row([ft.Text("MIDI", size=10, color=theme.MUTED), sb_midi],
                    spacing=4, tight=True),
-            sb_analyzer, sb_mute, sb_unmute,
+            *([sb_wifi] if sb_wifi else []),
+            sb_analyzer, sb_tuner, sb_mute, sb_unmute,
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=12),
         gradient=ft.LinearGradient(begin=ft.Alignment.TOP_CENTER,
                                    end=ft.Alignment.BOTTOM_CENTER,
@@ -112,6 +139,12 @@ def build(app: App) -> ft.Control:
     )
 
 
+def _on_wifi(app: App) -> None:
+    """Open the Wi-Fi settings dialog."""
+    from . import wifi_dialog
+    wifi_dialog.open_dialog(app)
+
+
 def _on_connect(app: App) -> None:
     """Toggle the connection: disconnects when connected, else connects the selected amp port."""
     if app.connected:
@@ -120,6 +153,7 @@ def _on_connect(app: App) -> None:
     if not app.sb_amp.value:
         app.set_status("Choose the amp's MIDI port first.")
         return
+    app.set_auto_connect(True)
     app.connect(app.sb_amp.value, app.sb_amp.value)
 
 

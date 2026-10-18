@@ -37,6 +37,9 @@ class StubPage:
     def add(self, *controls) -> None:
         pass
 
+    def clean(self) -> None:
+        pass
+
     def update(self, *a, **k) -> None:
         pass
 

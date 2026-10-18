@@ -26,7 +26,7 @@ def test_frequency_axis_is_logarithmic() -> None:
 
 class _Proc:
     def __init__(self, cmd, **kw):
-        _Proc.cmd = cmd
+        _Proc.cmd, _Proc.kw = cmd, kw
         self.returncode = None
 
     def poll(self):
@@ -41,6 +41,7 @@ def _app(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", _Proc)
     app = object.__new__(gui_app.App)
     app.an_proc = None
+    app.page = types.SimpleNamespace(web=False)
     app.sb_amp = types.SimpleNamespace(value="KATANA3")
     status = []
     app.set_status = status.append
@@ -51,6 +52,16 @@ def test_open_analyzer_passes_only_the_card(tmp_path, monkeypatch) -> None:
     app, status = _app(tmp_path, monkeypatch)
     app.open_analyzer()
     assert _Proc.cmd[1:] == ["-m", "katatone.gui.analyzer", "--card", "KATANA3"]
+
+
+def test_analyzer_output_is_discarded_unless_log_is_on(tmp_path, monkeypatch) -> None:
+    app, status = _app(tmp_path, monkeypatch)
+    app.open_analyzer()
+    assert _Proc.kw["stderr"] == subprocess.DEVNULL and list(tmp_path.iterdir()) == []
+    app.stop_analyzer()
+    monkeypatch.setattr(gui_app, "_log_files", True)
+    app.open_analyzer()
+    assert (tmp_path / "analyzer.log").exists()
 
 
 def test_only_one_analyzer_window_at_a_time(tmp_path, monkeypatch) -> None:
@@ -69,3 +80,30 @@ def test_linear_frequency_axis_is_evenly_spaced() -> None:
     assert an.freq_x(10010, 1000, linear=True) == pytest.approx(500)
     # log axis puts 1 kHz well past the middle of the linear scale's first tenth
     assert an.freq_x(1000, 1000) > 500 > an.freq_x(1000, 1000, linear=True)
+
+
+def test_desktop_session_opens_a_window(tmp_path, monkeypatch) -> None:
+    app, status = _app(tmp_path, monkeypatch)
+    app.page = types.SimpleNamespace(web=False)
+    app.open_analyzer()
+    assert "--web" not in _Proc.cmd
+
+
+def test_string_lines_slope_from_the_open_note_up_to_the_highest_note() -> None:
+    import flet.canvas as cv
+    shapes = an.string_shapes(1000, 400)
+    lines = [x for x in shapes if isinstance(x, cv.Line)]
+    assert len(lines) == 6
+    for ln in lines:
+        assert ln.y1 == 400 and ln.y2 == 0 and ln.x2 > ln.x1            # rises to the right
+    assert lines[0].x1 == pytest.approx(an.freq_x(82.41, 1000))          # E2 open
+    assert lines[0].x2 == pytest.approx(an.freq_x(82.41 * 2 ** (22 / 12), 1000))
+    labels = [x.value for x in shapes if isinstance(x, cv.Text)]
+    assert "E2 82" in labels and "D4 294" in labels and "D6 1175" in labels
+
+
+def test_string_lines_follow_the_linear_axis_too() -> None:
+    import flet.canvas as cv
+    line = next(x for x in an.string_shapes(1000, 400, linear=True) if isinstance(x, cv.Line))
+    assert line.x1 == pytest.approx(an.freq_x(82.41, 1000, True))
+    assert line.x2 == pytest.approx(an.freq_x(82.41 * 2 ** (22 / 12), 1000, True))
