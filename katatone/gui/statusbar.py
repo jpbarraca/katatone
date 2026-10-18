@@ -46,7 +46,7 @@ def _default_port(ports: list[str]) -> str | None:
 def _brand() -> ft.Control:
     """The KataTone wordmark shown at the left of the bar."""
     return ft.Column([
-        ft.Text("KATATONE", size=18, weight=ft.FontWeight.W_900, italic=True,
+        ft.Text("KataTone", size=18, weight=ft.FontWeight.W_900, italic=True,
                 color=theme.ACCENT, style=ft.TextStyle(letter_spacing=4)),
         ft.Text("KATANA GEN 3 · EDITOR", size=9, color=theme.MUTED,
                 style=ft.TextStyle(letter_spacing=2)),

@@ -37,7 +37,7 @@ class LoginPage:
 
     def _card(self, title: str, fields: list[ft.Control], button: ft.Control) -> None:
         """Put a centred card on the page."""
-        brand = ft.Text("KATATONE", size=26, weight=ft.FontWeight.W_900, italic=True,
+        brand = ft.Text("KataTone", size=26, weight=ft.FontWeight.W_900, italic=True,
                         color=theme.ACCENT, style=ft.TextStyle(letter_spacing=5))
         card = ft.Container(
             width=340, padding=24, border_radius=10,
