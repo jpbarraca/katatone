@@ -9,7 +9,7 @@ distribution (`webkit2gtk-4.1-0 python3-gi gir1.2-webkit2-4.1` on Debian/Ubuntu,
 `webkit2gtk4.1 python3-gobject` on Fedora), and KataTone installed with
 `--system-site-packages` so it can see them.
 
-When KataTone is used from a browser (`katatone-gui --web`), the button opens the
+When KataTone is used from a browser (`katatone-web`), the button opens the
 site in a new tab of that browser instead, with your own BOSS ID and no window on
 the machine running KataTone.  Download the `.tsl` there and add it with
 **Import .tsl…**; the rest of this page describes the desktop window.

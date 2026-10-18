@@ -7,7 +7,7 @@ the amp by USB, and be used from a browser on a phone or laptop.
 
 Install only the pieces you need (see [Install](install.md)): on the Pi,
 `pipx install --system-site-packages "katatone[web] @ git+https://github.com/jpbarraca/katatone"`.
-The `web` extra brings `flet-web`; `katatone-gui --web` stops with an explanation
+The `web` extra brings `flet-web`; `katatone-web` stops with an explanation
 if it is missing (Flet would otherwise try to download it at start, which fails
 offline or on a read-only file system).  Add `desktop` for a window on a machine
 with a screen.  The page is served with its own CanvasKit and fonts (no CDN), so
@@ -15,7 +15,7 @@ it renders on the Pi's access point with no internet.
 
 ## The server keeps working without a browser
 
-`katatone-gui --web` is a server: the amp link, the MIDI controllers and the
+`katatone-web` is a server: the amp link, the MIDI controllers and the
 patch state belong to it, not to a browser tab.  Pedals and footswitches keep
 switching channels and driving effects with no browser open; a tab that signs in
 shows the current state, and closing it (or a refresh, or a phone going to sleep)
@@ -32,7 +32,7 @@ desktop window as well.
 ## Start the web GUI
 
 ```bash
-katatone-gui --web --wifi --host 0.0.0.0 --port 8550
+katatone-web --wifi --host 0.0.0.0 --port 8550
 ```
 
 `--wifi` adds the Wi-Fi settings described below.  Without it the web GUI is the
@@ -57,7 +57,7 @@ After=NetworkManager.service sound.target
 
 [Service]
 User=katatone
-ExecStart=/home/katatone/.local/bin/katatone-gui --web --wifi --host 0.0.0.0
+ExecStart=/home/katatone/.local/bin/katatone-web --wifi --host 0.0.0.0
 Restart=on-failure
 
 [Install]
@@ -154,7 +154,7 @@ To spare an SD card, run with the file system that holds KataTone's data mounted
 read-only and add `--reduce-writes` (to `katatone-gui` and to the `katatone` command):
 
 ```bash
-katatone-gui --web --wifi --reduce-writes --host 0.0.0.0
+katatone-web --wifi --reduce-writes --host 0.0.0.0
 ```
 
 **Which file systems.**  At start KataTone works out which mount holds its data

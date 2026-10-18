@@ -1,9 +1,10 @@
 # Browser interface
 
-To use KataTone in a browser instead of a desktop window, run:
+To use KataTone in a browser instead of a desktop window, run `katatone-web`
+(`katatone-gui` is the desktop window, `katatone` the command line):
 
 ```bash
-katatone-gui --web
+katatone-web
 ```
 
 It prints the address (`http://127.0.0.1:8550/` by default) and opens it in your
@@ -45,6 +46,8 @@ you expose it on.
 | `--reduce-writes` | the file system is read-only; remount it only while writing |
 | `--rw-seconds N` | with `--reduce-writes`, how long it stays writable at start (120) |
 | `--log` | keep log files of the helper windows |
+| `--no-ble-writes` | over Bluetooth, only read from the amp |
+| `-h`, `--help` | list every option with its explanation |
 
 For a headless box next to the amp, with Wi-Fi, a read-only file system and a
 systemd unit, see [Raspberry Pi](raspberry-pi.md).

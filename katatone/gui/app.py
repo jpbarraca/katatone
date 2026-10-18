@@ -10,6 +10,7 @@ Run with:  ``python -m katatone.gui.app``
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 import time
@@ -53,6 +54,9 @@ AUTO_CONNECT_RETRY_S = 6.0
 # --reduce-writes: how long the file systems stay writable after start-up.
 RW_SECONDS = 120.0
 
+
+#: Whether Roland data writes are allowed over Bluetooth (``--no-ble-writes`` turns them off).
+_ble_writes = True
 
 #: Whether the helper processes' output is kept in log files (``--log``).
 _log_files = False
@@ -396,7 +400,12 @@ class App:
         self.set_busy(True, "Connecting…")
         t = None
         try:
-            t = make_alsa_transport(in_port, out_port)
+            if in_port.startswith("ble:"):
+                from ..protocol.blemidi import make_ble_transport
+                self.set_status("Connecting over Bluetooth…")
+                t = make_ble_transport(in_port[len("ble:"):], allow_writes=_ble_writes)
+            else:
+                t = make_alsa_transport(in_port, out_port)
             t.start()
             import time
             # Amp USB-MIDI rawmidi port needs to settle after open before it
@@ -536,7 +545,8 @@ class App:
             now: a monotonic time.
         """
         if self.connected:
-            if self.amp_port and self.amp_port not in ports:
+            if (self.amp_port and not self.amp_port.startswith("ble:")
+                    and self.amp_port not in ports):
                 self._disconnect_thread(graceful=False, msg="Amp disconnected.")
             return
         if (not self.auto_connect or self._connecting or self.busy
@@ -1481,28 +1491,78 @@ class App:
                 proc.terminate()
 
 
-def _parse_args(argv: list[str]):
-    """Parse the GUI's own flags; unknown (Flet) arguments are ignored.
+def _parse_args(argv: list[str], web: bool = False):
+    """Parse the flags of ``katatone-gui`` (a window) or ``katatone-web`` (a
+    browser interface); unknown (Flet) arguments are ignored.
+
+    ``-h`` / ``--help`` prints the options and exits.
 
     Args:
         argv: the argument list.
+        web: parse for ``katatone-web``: the browser interface is on and its
+            options are the ones listed.  (``--web`` is still accepted by
+            ``katatone-gui`` and means the same.)
     Returns:
-        The parsed options: ``verbose``, ``web``, ``host``, ``port``, ``wifi``, ``reduce_writes``, ``log``, ``auto_connect`` and ``rw_seconds``.
+        The parsed options: ``verbose``, ``web``, ``host``, ``port``, ``wifi``,
+        ``prog``, ``reduce_writes``, ``rw_seconds``, ``log``, ``auto_connect`` and
+        ``ble_writes``.
     """
     import argparse
-    parser = argparse.ArgumentParser(prog="katatone.gui", add_help=False)
-    parser.add_argument("-v", "--verbose", action="store_true", dest="verbose",
-                        default=False)
-    parser.add_argument("--web", action="store_true", default=False)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8550)
-    parser.add_argument("--wifi", action="store_true", default=False)
-    parser.add_argument("--reduce-writes", action="store_true", default=False)
-    parser.add_argument("--log", action="store_true", default=False)
-    parser.add_argument("--rw-seconds", type=float, default=RW_SECONDS)
-    parser.add_argument("--no-auto-connect", action="store_false", dest="auto_connect",
-                        default=True)
+    hide = argparse.SUPPRESS
+    prog = "katatone-web" if web else "katatone-gui"
+    if web:
+        description = ("KataTone as a browser interface for the BOSS Katana 50 Gen 3, behind a\n"
+                       "login.  The amp link and the MIDI controllers belong to the server, so\n"
+                       "pedals keep working with no browser open (for example on a Raspberry Pi\n"
+                       "next to the amp).  Other (Flet) arguments are passed through.")
+        examples = ("  katatone-web                       http://127.0.0.1:8550/ on this machine\n"
+                    "  katatone-web --host 0.0.0.0        reachable from the network\n"
+                    "  katatone-web --wifi --reduce-writes --host 0.0.0.0\n"
+                    "                                     headless Raspberry Pi, see docs/raspberry-pi.md\n"
+                    "\nThe desktop window is 'katatone-gui'; patches, the library and Wi-Fi from\n"
+                    "a shell are 'katatone --help'.")
+    else:
+        description = ("KataTone: patch editor for the BOSS Katana 50 Gen 3 in a desktop window.\n"
+                       "Other (Flet) arguments are passed through.")
+        examples = ("  katatone-gui                       desktop window\n"
+                    "  katatone-gui --no-auto-connect     do not connect to the amp by itself\n"
+                    "\nThe browser interface is 'katatone-web'; patches, the library and Wi-Fi\n"
+                    "from a shell are 'katatone --help'.")
+    parser = argparse.ArgumentParser(
+        prog=prog, formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=description, epilog="examples:\n" + examples)
+    parser.add_argument("-v", "--verbose", action="store_true", dest="verbose", default=False,
+                        help="trace to the terminal (stderr); writes no file")
+    # The browser flags: listed for katatone-web, accepted (hidden) by katatone-gui.
+    net = parser.add_argument_group("browser interface") if web else parser
+    net.add_argument("--web", action="store_true", default=False, help=hide)
+    net.add_argument("--host", default="127.0.0.1",
+                     help=("address to listen on (default 127.0.0.1; 0.0.0.0 for the whole "
+                           "network; traffic is plain HTTP)") if web else hide)
+    net.add_argument("--port", type=int, default=8550,
+                     help="port to listen on (default 8550)" if web else hide)
+    net.add_argument("--wifi", action="store_true", default=False,
+                     help=("add the Wi-Fi settings (network, fallback access point, IP, host "
+                           "name); needs NetworkManager (nmcli)") if web else hide)
+    amp = parser.add_argument_group("amp connection")
+    amp.add_argument("--no-auto-connect", action="store_false", dest="auto_connect", default=True,
+                     help="do not connect to the amp by itself when it appears")
+    amp.add_argument("--no-ble-writes", action="store_false", dest="ble_writes", default=True,
+                     help="over Bluetooth, only read from the amp (no patch or system writes)")
+    disk = parser.add_argument_group("storage")
+    disk.add_argument("--reduce-writes", action="store_true", default=False,
+                      help="the file system is read-only: remount the one holding the data and "
+                           "/etc read-write only while writing (needs root or sudo)")
+    disk.add_argument("--rw-seconds", type=float, default=RW_SECONDS, metavar="SECONDS",
+                      help="with --reduce-writes, how long those file systems stay writable "
+                           "after start (default %(default).0f)")
+    disk.add_argument("--log", action="store_true", default=False,
+                      help="keep the log files of the Analyzer and Tone Central helpers "
+                           "(off by default)")
     opts, _ = parser.parse_known_args(argv)
+    opts.prog = prog
+    if web:
+        opts.web = True
     return opts
 
 
@@ -1656,7 +1716,7 @@ def _require_web_support() -> None:
     except ImportError:
         ok = False
     if not ok:
-        sys.exit("katatone-gui: --web needs the flet-web package, in the same "
+        sys.exit("katatone-web needs the flet-web package, in the same "
                  "version as flet: pip install 'katatone[web]'")
 
 
@@ -1674,10 +1734,16 @@ def _end_init_after(seconds: float) -> None:
     timer.start()
 
 
-def main(argv: list[str] | None = None) -> None:
-    """Parse the CLI flags and run the Flet app.
+def main_web(argv: list[str] | None = None) -> None:
+    """Entry point of ``katatone-web``: :func:`main` with the browser interface on."""
+    main(argv, web=True)
 
-    ``--web`` serves the GUI to a browser instead of opening a desktop
+
+def main(argv: list[str] | None = None, web: bool = False) -> None:
+    """Parse the CLI flags and run the Flet app (``katatone-gui``; with ``web``,
+    ``katatone-web``).
+
+    The web interface serves the GUI to a browser instead of opening a desktop
     window, on ``--host`` (default ``127.0.0.1``, this machine only) and
     ``--port`` (default 8550); the address is printed at start.  The amp link
     and the MIDI controllers then belong to the server, not to the browser tab:
@@ -1689,30 +1755,37 @@ def main(argv: list[str] | None = None) -> None:
     Args:
         argv: the argument list (defaults to ``sys.argv[1:]``); unknown
             Flet args are tolerated.
+        web: run the browser interface (``katatone-web``).
     """
     import os
     import sys
     # Debug logging is OFF by default; pass -v/--verbose to trace execution
     # (mirrors the CLI).  Logs go to stderr so UI/JSON stay on stdout.
     from ..cli import _setup_logging
-    opts = _parse_args(sys.argv[1:] if argv is None else argv)
+    opts = _parse_args(sys.argv[1:] if argv is None else argv, web)
     _setup_logging(opts.verbose)
     rofs.enable(opts.reduce_writes)          # finds the data file system
-    global _log_files
+    global _log_files, _ble_writes
     _log_files = opts.log
+    _ble_writes = opts.ble_writes
     apps: list[App] = []
     if opts.wifi:
         from ..net.wifi import Wifi
         if not opts.web:
-            sys.exit("katatone-gui: --wifi needs --web")
+            sys.exit(f"{opts.prog}: --wifi is a setting of the browser interface: run katatone-web --wifi")
         if not Wifi.available():
-            sys.exit("katatone-gui: --wifi needs NetworkManager (nmcli), which is not installed")
+            sys.exit(f"{opts.prog}: --wifi needs NetworkManager (nmcli), which is not installed")
     if opts.web:
         _require_web_support()
     _begin_init(opts)
+    from . import headless
+    headless.install_safe_update()
+
+    async def on_loop(page) -> None:
+        """Runs on the pages' event loop at start: remember it (see headless.set_loop)."""
+        headless.set_loop(asyncio.get_running_loop())
+
     if opts.web:
-        from .headless import install_safe_update
-        install_safe_update()
         auth = auth_mod.Auth()
         backend = App(wifi=opts.wifi)
         apps.append(backend)
@@ -1723,10 +1796,10 @@ def main(argv: list[str] | None = None) -> None:
         # no_cdn: the page loads CanvasKit and its fonts from this server, so it
         # works on a network with no internet (the device's own access point).
         ft.run(main=lambda page: _open_web_session(page, backend, auth),
-               view=ft.AppView.WEB_BROWSER, host=opts.host, port=opts.port,
-               no_cdn=True)
+               before_main=on_loop, view=ft.AppView.WEB_BROWSER, host=opts.host,
+               port=opts.port, no_cdn=True)
     else:
-        ft.run(main=lambda page: _open_window(page, apps, opts))
+        ft.run(main=lambda page: _open_window(page, apps, opts), before_main=on_loop)
     for app in apps:
         app.release()
     rofs.end_init()                 # leave the file systems read-only
@@ -1750,7 +1823,7 @@ def _begin_init(opts) -> None:
     try:
         rofs.begin_init()
     except rofs.RemountError as e:
-        sys.exit(f"katatone-gui: {e}")
+        sys.exit(f"{opts.prog}: {e}")
     _end_init_after(opts.rw_seconds)
 
 

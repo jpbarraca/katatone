@@ -246,3 +246,37 @@ def test_the_tool_buttons_carry_the_token(backend) -> None:
         walk(c)
     token = backend.launch_token
     assert f"/analyzer?token={token}" in urls and f"/tuner?token={token}" in urls
+
+
+def test_updates_from_other_threads_run_on_the_pages_loop(monkeypatch) -> None:
+    import asyncio
+    import threading
+
+    import flet as ft
+    ran = []
+
+    def fake_update(self, *a):
+        ran.append(threading.get_ident())
+    monkeypatch.setattr(bc.BaseControl, "update", fake_update)
+    monkeypatch.setattr(headless, "_installed", False)
+    headless.install_safe_update()
+    loop = asyncio.new_event_loop()
+    t = threading.Thread(target=loop.run_forever, daemon=True)
+    t.start()
+    headless.set_loop(loop)
+    try:
+        ft.Text("x").update()                               # from this (other) thread
+        deadline = time.monotonic() + 2
+        while not ran and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ran == [t.ident]                             # it ran on the loop's thread
+        ran.clear()
+
+        async def on_loop():
+            ft.Text("y").update()
+        asyncio.run_coroutine_threadsafe(on_loop(), loop).result(2)
+        assert ran == [t.ident]                             # on the loop: called directly
+    finally:
+        headless.set_loop(None)
+        loop.call_soon_threadsafe(loop.stop)
+        t.join(2)

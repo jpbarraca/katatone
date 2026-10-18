@@ -43,11 +43,11 @@ Extras, system packages and troubleshooting: [Install](docs/install.md).
 
 ## Use
 
-Connect the amp with a USB cable and run `katatone-gui` (or `katatone-gui --web` for
-the browser).  It connects to the amp by itself.  Edit a tone in the **PATCH** tab,
+Connect the amp with a USB cable and run `katatone-gui` for the window or `katatone-web` for
+the browser.  It connects to the amp by itself.  Edit a tone in the **PATCH** tab,
 then **Save to library** to keep it, or **Write** to store it in an amp slot.
 
-There is also a command line: `katatone ports`, `katatone read --in KATANA3 --out
+`katatone-gui --help` and `katatone-web --help` list the options.  There is also a command line: `katatone ports`, `katatone read --in KATANA3 --out
 KATANA3 --patch 0`, ... — see `katatone --help`.
 
 ## Terms of service

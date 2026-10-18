@@ -15,10 +15,15 @@ if TYPE_CHECKING:
     from .app import App
 
 
-def _option(text: str):
-    """Create a dropdown option, using whichever Flet spelling exists."""
+_ble_names: dict[str, str] = {}
+
+
+def _option(key: str):
+    """Create a dropdown option, using whichever Flet spelling exists; a
+    Bluetooth amp (``ble:<address>``) is shown by its device name."""
+    text = f"{_ble_names.get(key, key)} (Bluetooth)" if key.startswith("ble:") else key
     opt = getattr(ft, "DropdownOption", None)
-    return opt(text) if opt else ft.dropdown.Option(text)
+    return opt(key=key, text=text) if opt else ft.dropdown.Option(key=key, text=text)
 
 
 def _ports() -> list[str]:
@@ -32,9 +37,17 @@ def _ports() -> list[str]:
     """
     try:
         from ..protocol.transport import list_alsa_ports
-        return list(list_alsa_ports().get("out", []))
+        ports = list(list_alsa_ports().get("out", []))
     except Exception:                                # noqa: BLE001
-        return []
+        ports = []
+    try:
+        from ..protocol.blemidi import list_devices
+        for d in list_devices():
+            _ble_names[d.spec] = d.name
+            ports.append(d.spec)
+    except Exception:                                # noqa: BLE001
+        pass
+    return ports
 
 
 def _default_port(ports: list[str]) -> str | None:
@@ -64,6 +77,12 @@ def build(app: App) -> ft.Control:
         The status bar container control.
     """
     ports = _ports()
+    try:
+        from ..protocol import blemidi
+        if blemidi.problem:                 # a Bluetooth adapter, but no Bluetooth amp listing
+            app.set_status(blemidi.problem)
+    except Exception:                                # noqa: BLE001
+        pass
     sb_amp = ft.Dropdown(label="Amp (MIDI port)", width=210,
                          options=[_option(x) for x in ports],
                          value=app.amp_port if app.amp_port in ports else _default_port(ports),

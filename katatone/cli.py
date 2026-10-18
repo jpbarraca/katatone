@@ -170,7 +170,18 @@ def _run(argv: list[str] | None = None) -> int:
     Returns:
         Exit code: 0 on success, 2 on usage errors.
     """
-    ap = argparse.ArgumentParser(prog="katatone", description=__doc__)
+    ap = argparse.ArgumentParser(
+        prog="katatone", formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="KataTone command line for the BOSS Katana 50 Gen 3: read and write\n"
+                    "patches, manage the local library, set up the Wi-Fi of a Raspberry Pi\n"
+                    "and the web password.  The editor itself is katatone-gui.",
+        epilog="examples:\n"
+               "  katatone ports\n"
+               "  katatone read --in KATANA3 --out KATANA3 --patch 0 --out-file tone.tsl\n"
+               "  katatone write --in KATANA3 --out KATANA3 --patch 1 --tsl tone.tsl\n"
+               "  katatone library list\n"
+               "  katatone wifi set --ssid home --key 'my wifi key'\n"
+               "\n'katatone COMMAND --help' lists the options of a command.")
     # Debug logging is OFF by default; pass -v/--verbose to trace execution.
     ap.add_argument("-v", "--verbose", action="store_true", dest="verbose",
                     help="enable debug logging to terminal")
@@ -179,7 +190,7 @@ def _run(argv: list[str] | None = None) -> int:
                          "only while writing")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("ports", help="list MIDI ports")
+    sub.add_parser("ports", help="list the MIDI cards that can be used as the amp")
 
     def need_midi(p):
         """Add the required ``--in`` / ``--out`` port options to a subparser.
@@ -187,40 +198,47 @@ def _run(argv: list[str] | None = None) -> int:
         Args:
             p: the subparser to extend.
         """
-        p.add_argument("--in", dest="in_port", required=True)
-        p.add_argument("--out", dest="out_port", required=True)
+        p.add_argument("--in", dest="in_port", required=True,
+                       help="MIDI port to read from (a card name from 'katatone ports', e.g. KATANA3)")
+        p.add_argument("--out", dest="out_port", required=True,
+                       help="MIDI port to write to (usually the same card)")
 
-    p = sub.add_parser("connect", help="handshake only")
+    p = sub.add_parser("connect", help="open the link to the amp and run the handshake only")
     need_midi(p)
 
-    p = sub.add_parser("read", help="read region or patch")
+    p = sub.add_parser("read", help="read a patch or a region from the amp (JSON, or a .tsl file)")
     need_midi(p)
-    p.add_argument("--patch", type=int, help="user patch 0-9")
-    p.add_argument("--region", choices=["SETUP", "SYSTEM", "TEMP", "COMMAND"])
-    p.add_argument("--out-file", help="save as .tsl (patch mode)")
+    p.add_argument("--patch", type=int, help="user patch to read, 0-9")
+    p.add_argument("--region", choices=["SETUP", "SYSTEM", "TEMP", "COMMAND"],
+                   help="read a whole region instead of a patch")
+    p.add_argument("--out-file", help="save the patch as a .tsl file instead of printing JSON")
 
-    p = sub.add_parser("write", help="write patch from .tsl")
+    p = sub.add_parser("write", help="write a patch from a .tsl file into an amp slot (overwrites it)")
     need_midi(p)
-    p.add_argument("--patch", type=int, required=True)
-    p.add_argument("--tsl", required=True)
-    p.add_argument("--name")
+    p.add_argument("--patch", type=int, required=True, help="amp slot to overwrite, 0-9")
+    p.add_argument("--tsl", required=True, help=".tsl liveset holding the patch")
+    p.add_argument("--name", help="patch name to store (default: the file's)")
 
-    p = sub.add_parser("clear", help="clear user patch")
+    p = sub.add_parser("clear", help="clear a user patch on the amp")
     need_midi(p)
-    p.add_argument("--patch", type=int, required=True)
+    p.add_argument("--patch", type=int, required=True, help="amp slot to clear, 0-9")
 
-    p = sub.add_parser("select", help="select user patch on amp")
+    p = sub.add_parser("select", help="switch the amp to a user patch")
     need_midi(p)
-    p.add_argument("--patch", type=int, required=True)
+    p.add_argument("--patch", type=int, required=True, help="amp slot to select, 0-9")
 
-    p = sub.add_parser("library", help="local library")
-    p.add_argument("action", choices=["list", "save", "import", "remove"])
-    p.add_argument("name", nargs="?")
-    p.add_argument("--file", help=".tsl file for import")
-    p.add_argument("--dir", help="library dir override")
+    p = sub.add_parser("library", help="the local library of livesets (.tsl files)")
+    p.add_argument("action", choices=["list", "save", "import", "remove"],
+                   help="list the livesets, import a .tsl file, or remove a liveset")
+    p.add_argument("name", nargs="?", help="liveset name (for remove)")
+    p.add_argument("--file", help=".tsl file to import")
+    p.add_argument("--dir", help="use this library directory instead of the default")
 
-    p = sub.add_parser("wifi", help="Wi-Fi client / access-point fallback")
-    p.add_argument("action", choices=["status", "set", "ensure", "retry"])
+    p = sub.add_parser("wifi", help="Wi-Fi: network, fallback access point, IP, host name (NetworkManager)")
+    p.add_argument("action", choices=["status", "set", "ensure", "retry"],
+                   help="status: show; set: store the options below and apply them; "
+                        "ensure: join the network or else the access point; "
+                        "retry: try the saved network now")
     p.add_argument("--ssid", default=None,
                    help="network to join ('' = access point only; omit to keep)")
     p.add_argument("--key", default="", help="its WPA-PSK key (blank: keep)")
@@ -237,7 +255,7 @@ def _run(argv: list[str] | None = None) -> int:
     p.add_argument("--ap", action=argparse.BooleanOptionalAction, default=None,
                    help="use the access point as the fallback (default: keep)")
 
-    sub.add_parser("passwd", help="set the web GUI password")
+    sub.add_parser("passwd", help="set the password of the web interface (asks for it)")
 
     args = ap.parse_args(argv)
     _setup_logging(args.verbose)

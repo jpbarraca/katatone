@@ -9,6 +9,7 @@ harmless.
 """
 from __future__ import annotations
 
+import asyncio
 import threading
 import types
 
@@ -46,28 +47,61 @@ class HeadlessPage:
 
 
 _installed = False
+_loop: "asyncio.AbstractEventLoop | None" = None
+
+
+def set_loop(loop: "asyncio.AbstractEventLoop | None") -> None:
+    """Remember the event loop the pages are served on.
+
+    Flet queues a control's update and wakes its sender with an ``asyncio.Event``,
+    which must be set from the loop's own thread: set from another thread (the MIDI
+    monitor, the amp's notifications) the update waits until some other event, such
+    as a click, wakes the loop.  :func:`install_safe_update` therefore forwards
+    updates made from other threads to this loop.
+    """
+    global _loop
+    _loop = loop
+
+
+def _on_loop() -> bool:
+    """Whether the caller is running on the pages' event loop."""
+    try:
+        return asyncio.get_running_loop() is _loop
+    except RuntimeError:
+        return False
 
 
 def install_safe_update() -> None:
-    """Make ``Control.update()`` a no-op for controls that are not on a page.
+    """Make ``update()`` safe for the headless / multi-threaded app (idempotent).
 
-    The App keeps its widgets between browser sessions, and background threads
-    (the MIDI router, the amp's notifications) update them; with no session
-    attached Flet would raise "Control must be added to the page first".
-    Other errors still propagate.
+    * A control that is not on a page (the app keeps its widgets between browser
+      sessions) is ignored instead of raising "Control must be added to the page
+      first"; other errors still propagate.
+    * An update made from another thread is handed to the pages' event loop (see
+      :func:`set_loop`), so the browser sees it at once.
     """
     global _installed
     if _installed:
         return
     from flet.controls.base_control import BaseControl
-    original = BaseControl.update
+    from flet.controls.page import Page
 
-    def update(self) -> None:
-        try:
-            original(self)
-        except RuntimeError as e:
-            if "added to the page" not in str(e):
-                raise
+    def guard(original):
+        def call(self, *args) -> None:
+            try:
+                original(self, *args)
+            except RuntimeError as e:
+                if "added to the page" not in str(e):
+                    raise
 
-    BaseControl.update = update
+        def update(self, *args) -> None:
+            loop = _loop
+            if loop is not None and loop.is_running() and not _on_loop():
+                loop.call_soon_threadsafe(call, self, *args)
+            else:
+                call(self, *args)
+        return update
+
+    BaseControl.update = guard(BaseControl.update)
+    Page.update = guard(Page.update)
     _installed = True

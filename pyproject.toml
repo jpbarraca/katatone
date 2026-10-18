@@ -11,11 +11,14 @@ dependencies = []
 gui = ["flet>=1.0", "numpy>=1.26"]
 desktop = ["katatone[gui]", "flet-desktop>=1.0"]
 web = ["katatone[gui]", "flet-web>=1.0"]
+# The amp over Bluetooth (BlueZ through D-Bus).
+bluetooth = ["dbus-fast>=2.0"]
 dev = ["pytest>=8", "platformdirs"]
 
 [project.scripts]
 katatone = "katatone.cli:main"
 katatone-gui = "katatone.gui.app:main"
+katatone-web = "katatone.gui.app:main_web"
 
 [build-system]
 requires = ["setuptools>=68"]
