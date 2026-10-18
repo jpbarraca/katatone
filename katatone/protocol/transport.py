@@ -93,6 +93,9 @@ class Transport:
         # pending RQ1 (the amp announcing a change, or echoing our own write).
         # Runs on the RX thread: it must return quickly.
         self.on_unsolicited: Callable[[int, bytes], None] | None = None
+        # How long a run of DT1 frames answering one RQ1 must be silent before the
+        # reply counts as complete; a slower link (Bluetooth) needs longer.
+        self.quiet_s = 0.1
 
     # ------------------------------------------------------------------ tx
 
@@ -314,12 +317,12 @@ class Transport:
             # <=128-byte DT1 frames carrying the same address.  Drain any
             # frames still in flight (p.n stabilises) so the full reply is
             # accumulated, not just the first chunk.
-            quiet_until = time.monotonic() + 0.1
+            quiet_until = time.monotonic() + self.quiet_s
             last = p.n
             while True:
                 if p.n != last:
                     last = p.n
-                    quiet_until = time.monotonic() + 0.1
+                    quiet_until = time.monotonic() + self.quiet_s
                 if time.monotonic() >= quiet_until:
                     break
                 time.sleep(0.002)

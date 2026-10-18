@@ -15,8 +15,9 @@ Pick the extras you need, so each machine installs only what it uses:
 | Extra | For |
 |---|---|
 | `desktop` | the window (`katatone-gui`) |
-| `web` | the browser interface (`katatone-gui --web`), e.g. a headless Raspberry Pi |
+| `web` | the browser interface (`katatone-web`), e.g. a headless Raspberry Pi |
 | `desktop,web` | both |
+| `bluetooth` | the amp over Bluetooth (needs `dbus-fast`; see [Bluetooth](bluetooth.md)) |
 
 The command line (`katatone`) needs neither.
 
