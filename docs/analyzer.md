@@ -1,6 +1,7 @@
 # Analyzer
 
-The **Analyzer** button in the top bar opens a separate window that shows the
+The **Analyzer** button in the top bar opens a separate window (in a browser session, a
+new tab at `/analyzer` of the server, behind the same login, passed as a token by the button) that shows the
 level and spectrum of a sound-card input.  It only listens to the sound card; it
 does not talk to the amp, and it shares nothing with the editor window, so you
 can tweak the sound (an EQ, say) in the editor and watch the result live.
@@ -11,8 +12,11 @@ can tweak the sound (an EQ, say) in the editor and watch the result live.
   the white line the held peak and the dot at the top lights on clipping.
   **Clear** resets the peak and the clip light.
 - **Options (above the plots):** **Linear frequency scale** (off = logarithmic, the default);
-  **Guitar strings** draws a green line at each open string in standard tuning
-  (E2 82 Hz, A2 110, D3 147, G3 196, B3 247, E4 330); **Tone zones** shades the
+  **Guitar strings** draws a green line for each string in standard tuning,
+  sloping from the string's open note at the bottom of the plot (E2 82 Hz, A2 110,
+  D3 147, G3 196, B3 247, E4 330) up to its highest note at the top (fret 22: D4
+  294 Hz, G4 392, C5 523, F5 698, A5 880, D6 1175), so each line's slope and two
+  ends show the range of frequencies that string can play; **Tone zones** shades the
   typical ranges engineers associate with a sound: rumble (20–60 Hz), boomy
   (60–120), warm (120–250), muddy (250–500), boxy (500 Hz–1 kHz), honky (1–2 kHz),
   present (2–4 kHz), harsh / fizzy (4–8 kHz) and airy (8–20 kHz).  The zones are

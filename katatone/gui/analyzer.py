@@ -65,6 +65,30 @@ def freq_x(f: float, width: float, linear: bool = False) -> float:
     return float(width * (np.log10(f) - lo) / (hi - lo))
 
 
+def string_shapes(w: float, h: float, linear: bool = False) -> list:
+    """The guitar strings as sloped lines over the spectrum.
+
+    Each string runs from its lowest note (the open string) at the bottom of
+    the plot to its highest note (:data:`bands.FRETS` frets up) at the top, so
+    the line's slope and its two ends show which frequencies the string covers.
+
+    Args:
+        w: plot width.
+        h: plot height.
+        linear: linear (not logarithmic) frequency axis.
+    Returns:
+        Canvas shapes: a line and the two note labels for every string.
+    """
+    shapes: list = []
+    style = ft.TextStyle(size=10, color=STRING_COLOR)
+    for i, (name, f_lo, top, f_hi) in enumerate(bands.string_ranges()):
+        x0, x1 = freq_x(f_lo, w, linear), freq_x(f_hi, w, linear)
+        shapes.append(cv.Line(x0, h, x1, 0, paint=_stroke(STRING_COLOR, 1)))
+        shapes.append(cv.Text(x0 + 2, h - 44 - (i % 2) * 12, f"{name} {f_lo:.0f}", style=style))
+        shapes.append(cv.Text(x1 + 3, 14 + (i % 2) * 12, f"{top} {f_hi:.0f}", style=style))
+    return shapes
+
+
 def spec_y(db: float, height: float) -> float:
     """Vertical position of ``db`` on the spectrum."""
     frac = (min(SPEC_MAX_DB, max(SPEC_MIN_DB, db)) - SPEC_MIN_DB) / (SPEC_MAX_DB - SPEC_MIN_DB)
@@ -124,7 +148,8 @@ class Analyzer:
             on_change=lambda e: self._set_scale())
         self.show_strings = ft.Checkbox(
             label="Guitar strings", value=False,
-            tooltip="Open strings in standard tuning: E2 A2 D3 G3 B3 E4",
+            tooltip="Each string in standard tuning, sloping from its open note (E2 A2 D3 G3 B3 E4) "
+                    f"up to its highest note at fret {bands.FRETS}",
             on_change=lambda e: self._draw_spectrum_grid())
         self.show_zones = ft.Checkbox(
             label="Tone zones", value=False,
@@ -340,11 +365,7 @@ class Analyzer:
             text = f"{f // 1000}k" if f >= 1000 else str(f)
             shapes.append(_label(x + 2, h - 14, text))
         if self.show_strings.value:
-            for i, (name, f) in enumerate(bands.STRINGS):
-                x = freq_x(f, w, lin)
-                shapes.append(cv.Line(x, 0, x, h, paint=_stroke(STRING_COLOR, 1)))
-                shapes.append(cv.Text(x + 2, h - 44 - (i % 2) * 12, f"{name} {f:.0f}",
-                                      style=ft.TextStyle(size=10, color=STRING_COLOR)))
+            shapes += string_shapes(w, h, lin)
         self.spec_grid.shapes = shapes
         self._update(self.spec_grid)
 
@@ -390,16 +411,24 @@ def main(argv: list[str] | None = None) -> None:
 
     Args:
         argv: arguments (default ``sys.argv[1:]``): ``--card NAME`` to
-            preselect a sound card; unknown (Flet) arguments are ignored.
+            preselect a sound card, ``--web [--port N]`` to open in the
+            browser; unknown (Flet) arguments are ignored.
     """
     import argparse
     import os
     import sys
     parser = argparse.ArgumentParser(prog="katatone.gui.analyzer", add_help=False)
     parser.add_argument("--card", default=None)
+    parser.add_argument("--web", action="store_true", default=False)
+    parser.add_argument("--port", type=int, default=0)
     opts, _ = parser.parse_known_args(sys.argv[1:] if argv is None else argv)
     windows: list[Analyzer] = []
-    ft.run(main=lambda page: windows.append(Analyzer(page, opts.card)))
+    build = lambda page: windows.append(Analyzer(page, opts.card))   # noqa: E731
+    if opts.web:       # a tab in the default browser instead of a window
+        ft.run(main=build, view=ft.AppView.WEB_BROWSER, host="127.0.0.1", port=opts.port,
+               no_cdn=True)
+    else:
+        ft.run(main=build)
     for w in windows:
         w.close()
     sys.stdout.flush()
