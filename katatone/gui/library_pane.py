@@ -3,7 +3,8 @@
 The library is a list of *livesets*; each
 liveset groups up to ``MAX_PATCHES`` patches.  Left: the livesets (New,
 Rename, Duplicate, Export, Delete, Import, plus Tone Central: open the
-BOSS Tone Exchange window and sign in; downloaded livesets appear here).  Right: the selected liveset's
+BOSS Tone Exchange window and sign in; downloaded livesets appear here; in a browser
+session it opens the site in a new tab and downloads are added with Import).  Right: the selected liveset's
 patches, drag-to-reorder, with per-patch Load into editor, Send to amp slot,
 Rename, Duplicate, Copy/Move to another liveset and Delete; patches are added
 from the editor or read straight from an amp slot.
@@ -16,15 +17,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Callable, Optional
 
 import datetime
-import pathlib
-import shutil
 
 import flet as ft
 
 from ..liveset.tsl import MAX_PATCHES, LivesetFull, Tsl
 from ..model.paramset import ParamSet
 from ..remote.webview import DEFAULT_URL, stored_refresh_token
-from . import params_view as pv, theme
+from . import files, params_view as pv, theme
 
 if TYPE_CHECKING:
     from .app import App
@@ -163,10 +162,14 @@ class _LibraryPane:
             style=ft.TextStyle(color=theme.ACCENT,
                                decoration=ft.TextDecoration.UNDERLINE))
 
+        in_browser = bool(getattr(self.app.page, "web", False))
+
         def ok(e) -> None:
-            """Close the dialog and open the Tone Exchange window."""
+            """Close the dialog and open the Tone Exchange (in the browser, the
+            button itself opens the tab, so the click counts as the user's)."""
             self.app.page.pop_dialog()
-            self.app.tonecentral_open(DEFAULT_URL)
+            if not in_browser:
+                self.app.tonecentral_open(DEFAULT_URL)
 
         self.app.page.show_dialog(ft.AlertDialog(
             title=ft.Text("Opening the BOSS Tone Exchange"),
@@ -180,13 +183,17 @@ class _LibraryPane:
                         "in any way.", color=theme.MUTED),
                 ft.Text("Only download and share livesets you have the right "
                         "to use.", color=theme.MUTED),
+                *([ft.Text("It opens in a new tab of this browser, with your own "
+                           "BOSS ID. Download a liveset there, then add it here "
+                           "with Import .tsl…")] if in_browser else []),
             ], tight=True, spacing=10, width=420),
             bgcolor=theme.PANEL_TOP,
             actions=[pv.link_button("Cancel",
                                     lambda e: self.app.page.pop_dialog(),
                                     color=theme.MUTED),
                      pv.button("Continue", ft.Icons.OPEN_IN_NEW, ok,
-                               primary=True)]))
+                               primary=True, url=ft.Url(DEFAULT_URL, ft.UrlTarget.BLANK)
+                               if in_browser else None)]))
 
     def refresh_tone(self) -> None:
         """Reflect the webview state in the status line and list livesets
@@ -568,23 +575,20 @@ class _LibraryPane:
     # ----------------------------------------------------- import/export
 
     async def _import(self, e) -> None:
-        """Pick one or more .tsl files with the native chooser and import them."""
+        """Pick one or more .tsl files with the file chooser and import them."""
         ft.context.disable_auto_update()
         try:
-            files = await self._picker.pick_files(
-                dialog_title="Import liveset",
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["tsl"], allow_multiple=True)
+            paths = await files.pick_files(self.app.page, self._picker,
+                                           "Import liveset", "tsl", multiple=True)
         except Exception as ex:                       # noqa: BLE001
             # e.g. no zenity/kdialog available for the desktop dialog
             self.app.set_status(f"File chooser unavailable: {ex}")
             return
-        paths = [f.path for f in files or [] if f.path]
         if not paths:
             self.app.set_status("Import cancelled.")
             return
         for path in paths:
-            self.app.import_liveset(path)
+            self.app.import_liveset(str(path))
 
     def _export_handler(self, name: str):
         """Wrap :meth:`_export` in a click handler for the Export… menu
@@ -602,38 +606,26 @@ class _LibraryPane:
         return handler
 
     async def _export(self, name: str) -> None:
-        """Ask for the destination folder + file name with the native "Save
-        as" dialog, then copy the liveset there.
+        """Offer the liveset as a file: a "Save as" dialog on the desktop, a
+        download in a browser.
 
         Args:
             name: the liveset to export (its ``.tsl`` file under the library
                 root).
         """
         ft.context.disable_auto_update()
-        src = self.app.lib.root / f"{name}.tsl"
-        start = pathlib.Path.home() / "Desktop"
-        if not start.exists():
-            start = pathlib.Path.home()
         try:
-            chosen = await self._picker.save_file(
-                dialog_title=f"Export liveset {name!r}",
-                file_name=f"{name}.tsl", initial_directory=str(start),
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["tsl"])
+            where = await files.save_bytes(
+                self.app.page, self._picker, f"Export liveset {name!r}",
+                f"{name}.tsl", "tsl", (self.app.lib.root / f"{name}.tsl").read_bytes())
+        except OSError as ex:
+            self.app.set_status(f"Export failed: {ex}")
+            return
         except Exception as ex:                       # noqa: BLE001
             self.app.set_status(f"File chooser unavailable: {ex}")
             return
-        if not chosen:
-            self.app.set_status("Export cancelled.")
-            return
-        dest = pathlib.Path(chosen)
-        if dest.suffix.lower() != ".tsl":
-            dest = dest.with_name(dest.name + ".tsl")
-        try:
-            shutil.copy(src, dest)
-            self.app.set_status(f"Exported -> {dest}")
-        except Exception as e:                        # noqa: BLE001
-            self.app.set_status(f"Export failed: {e}")
+        self.app.set_status("Export cancelled." if where is None
+                            else f"Exported -> {where}")
 
     # ----------------------------------------------------------- dialogs
 

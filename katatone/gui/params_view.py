@@ -87,7 +87,7 @@ def _push(ctrl: ft.Control) -> None:
 
 
 def button(text: str, icon, on_click, primary: bool = False,
-           expand: bool = False) -> ft.FilledButton:
+           expand: bool = False, url=None) -> ft.FilledButton:
     """Panel button: amber when primary, slate otherwise; text never wraps.
 
     Args:
@@ -98,6 +98,7 @@ def button(text: str, icon, on_click, primary: bool = False,
             otherwise.
         expand: only set when true: Flet treats any explicit value as a flex
             child, which breaks the button inside a wrapping Row.
+        url: a page the button opens when pressed (see ``ft.Url``).
 
     Returns:
         The styled ``ft.FilledButton``.
@@ -105,6 +106,7 @@ def button(text: str, icon, on_click, primary: bool = False,
     return ft.FilledButton(
         content=ft.Text(text, no_wrap=True, size=13), icon=icon,
         on_click=on_click, **({"expand": True} if expand else {}),
+        **({"url": url} if url else {}),
         style=ft.ButtonStyle(
             bgcolor=theme.ACCENT if primary else theme.TAB_ACTIVE,
             color=theme.BG if primary else theme.FOREGROUND,

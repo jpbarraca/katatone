@@ -17,6 +17,7 @@ import collections
 import datetime
 import logging
 import pathlib
+import tempfile
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -25,7 +26,7 @@ import flet as ft
 
 from ..midi.events import MidiEvent, describe
 from ..midi.mapping import Mapping, Profile, UnknownAction
-from . import dialogs, params_view as pv, theme
+from . import dialogs, files, params_view as pv, theme
 from .mapping_dialog import MappingDialog
 
 if TYPE_CHECKING:
@@ -416,16 +417,14 @@ class _MidiPane:
         dialogs.confirm(self.app.page, f"Delete profile {name!r} and all its mappings?", ok)
 
     async def _import(self, e) -> None:
-        """Import a profile JSON chosen with the native file chooser."""
+        """Import a profile JSON chosen with the file chooser."""
         ft.context.disable_auto_update()
         try:
-            files = await self._picker.pick_files(
-                dialog_title="Import MIDI profile", file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["json"])
+            paths = await files.pick_files(self.app.page, self._picker,
+                                           "Import MIDI profile", "json")
         except Exception as ex:                         # noqa: BLE001
             self.app.set_status(f"File chooser unavailable: {ex}")
             return
-        paths = [f.path for f in files or [] if f.path]
         if not paths:
             return
         try:
@@ -437,28 +436,27 @@ class _MidiPane:
         self._switch(prof.name)
 
     async def _export(self, e) -> None:
-        """Export the active profile to a JSON file chosen with the native dialog."""
+        """Offer the active profile as a JSON file: a "Save as" dialog on the
+        desktop, a download in a browser."""
         ft.context.disable_auto_update()
         name = self.midi.profile.name
         self.midi.save_profile()
         try:
-            chosen = await self._picker.save_file(
-                dialog_title=f"Export profile {name!r}", file_name=f"{name}.json",
-                initial_directory=str(pathlib.Path.home()),
-                file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=["json"])
+            with tempfile.TemporaryDirectory() as tmp:
+                src = pathlib.Path(tmp) / f"{name}.json"
+                self.midi.store.export_file(name, src)
+                data = src.read_bytes()
+            where = await files.save_bytes(
+                self.app.page, self._picker, f"Export profile {name!r}",
+                f"{name}.json", "json", data)
+        except OSError as ex:
+            self.app.set_status(f"Export failed: {ex}")
+            return
         except Exception as ex:                         # noqa: BLE001
             self.app.set_status(f"File chooser unavailable: {ex}")
             return
-        if not chosen:
-            return
-        dest = pathlib.Path(chosen)
-        if dest.suffix.lower() != ".json":
-            dest = dest.with_name(dest.name + ".json")
-        try:
-            self.midi.store.export_file(name, dest)
-            self.app.set_status(f"Exported -> {dest}")
-        except OSError as ex:
-            self.app.set_status(f"Export failed: {ex}")
+        if where is not None:
+            self.app.set_status(f"Exported -> {where}")
 
     # -- mappings ------------------------------------------------------------
 
