@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import rofs
 from ..liveset.tsl import Tsl
 from ..paths import data_root
 
@@ -39,7 +40,8 @@ class Library:
             root: where ``.tsl`` files live (defaults to ``<data dir>/livesets``).
         """
         self.root = Path(root) if root else data_root() / "livesets"
-        self.root.mkdir(parents=True, exist_ok=True)
+        with rofs.writable(self.root):
+            self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, name: str) -> Path:
         """File path of the liveset called ``name``.
@@ -95,7 +97,8 @@ class Library:
         """
         tsl.name = clean_name(tsl.name)
         p = self._path(tsl.name)
-        tsl.save(p)
+        with rofs.writable(self.root):
+            tsl.save(p)
         return p
 
     def load(self, name: str) -> Tsl:
@@ -146,8 +149,9 @@ class Library:
             raise FileExistsError(f"a liveset named {new!r} already exists")
         tsl = self.load(old)
         tsl.name = new
-        self.save(tsl)
-        self._path(old).unlink(missing_ok=True)
+        with rofs.writable(self.root):
+            self.save(tsl)
+            self._path(old).unlink(missing_ok=True)
         return new
 
     def duplicate(self, name: str) -> Tsl:
@@ -179,4 +183,5 @@ class Library:
         Args:
             name: liveset name to delete.
         """
-        self._path(name).unlink(missing_ok=True)
+        with rofs.writable(self.root):
+            self._path(name).unlink(missing_ok=True)

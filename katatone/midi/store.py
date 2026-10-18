@@ -11,6 +11,7 @@ import logging
 import os
 from pathlib import Path
 
+from .. import rofs
 from ..library.store import clean_name
 from ..paths import data_root
 from .mapping import Profile
@@ -39,7 +40,8 @@ class ProfileStore:
             root: directory for the JSON files (defaults to `default_dir()`).
         """
         self.root = Path(root) if root else default_dir()
-        self.root.mkdir(parents=True, exist_ok=True)
+        with rofs.writable(self.root):
+            self.root.mkdir(parents=True, exist_ok=True)
         self._active_file = self.root / "active.txt"
 
     def _path(self, name: str) -> Path:
@@ -96,8 +98,9 @@ class ProfileStore:
         profile.name = clean_name(profile.name)
         path = self._path(profile.name)
         tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(profile.to_dict(), indent=2) + "\n")
-        os.replace(tmp, path)
+        with rofs.writable(self.root):
+            tmp.write_text(json.dumps(profile.to_dict(), indent=2) + "\n")
+            os.replace(tmp, path)
 
     def delete(self, name: str) -> None:
         """Remove a profile; deleting the active one falls back to Default.
@@ -105,9 +108,10 @@ class ProfileStore:
         Args:
             name: the profile name (a missing profile is not an error).
         """
-        self._path(name).unlink(missing_ok=True)
-        if self._read_active() == clean_name(name):
-            self._active_file.unlink(missing_ok=True)
+        with rofs.writable(self.root):
+            self._path(name).unlink(missing_ok=True)
+            if self._read_active() == clean_name(name):
+                self._active_file.unlink(missing_ok=True)
 
     def rename(self, old: str, new: str) -> None:
         """Rename a profile, keeping it active if it was.
@@ -127,10 +131,11 @@ class ProfileStore:
             raise FileExistsError(f"a profile named {clean_name(new)!r} exists")
         was_active = self._read_active() == clean_name(old)
         prof.name = new
-        self.save(prof)
-        self._path(old).unlink()
-        if was_active:
-            self.set_active(prof.name)
+        with rofs.writable(self.root):
+            self.save(prof)
+            self._path(old).unlink()
+            if was_active:
+                self.set_active(prof.name)
 
     def duplicate(self, name: str, new: str) -> Profile:
         """Copy a profile (mappings get fresh ids so the copies stay independent).
@@ -223,5 +228,6 @@ class ProfileStore:
         if not self.exists(name):
             raise FileNotFoundError(name)
         tmp = self._active_file.with_suffix(".txt.tmp")
-        tmp.write_text(clean_name(name) + "\n")
-        os.replace(tmp, self._active_file)
+        with rofs.writable(self.root):
+            tmp.write_text(clean_name(name) + "\n")
+            os.replace(tmp, self._active_file)
