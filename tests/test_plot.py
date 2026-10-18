@@ -56,3 +56,24 @@ def test_meter_clip_square() -> None:
     lit = plot.meter_image(30, 40, 40.0, None, [], BLUE, True, RED, 5, 10)
     off = plot.meter_image(30, 40, 40.0, None, [], BLUE, False, RED, 5, 10)
     assert (lit[5, 8] == RED).all() and off[5, 8, 3] == 0
+
+
+def test_extra_traces_are_drawn_under_the_average() -> None:
+    xs = np.array([0.0, 99.0])
+    img = plot.spectrum_image(100, 50, xs, np.array([40.0, 40.0]), np.array([10.0, 10.0]),
+                              RED, GREEN, BLUE, extras=[(np.array([20.0, 20.0]), plot.rgba("#0000ff"))])
+    assert (img[20, 50] == plot.rgba("#0000ff")).all()          # the extra line
+    assert (img[40, 50] == RED).all()                           # the average on top
+
+
+def test_diff_image_fills_towards_the_curve_from_the_centre_line() -> None:
+    xs = np.array([0.0, 99.0])
+    up, down, line = plot.rgba("#ff0000", 90), plot.rgba("#0000ff", 90), plot.rgba("#ffffff")
+    img = plot.diff_image(100, 41, xs, np.array([6.0, 6.0]), 12.0, up, down, line)
+    assert (img[15, 50] == up).all() and img[25, 50, 3] == 0    # +6 dB: up, not down
+    img = plot.diff_image(100, 41, xs, np.array([-6.0, -6.0]), 12.0, up, down, line)
+    assert (img[25, 50] == down).all() and img[15, 50, 3] == 0
+    flat = plot.diff_image(100, 41, xs, np.zeros(2), 12.0, up, down, line)
+    assert (flat[20, :] == line).all()                          # the centre line
+    clipped = plot.diff_image(100, 41, xs, np.array([99.0, 99.0]), 12.0, up, down, line)
+    assert (clipped[1, 50] == line).all() or (clipped[1, 50] == up).all()   # held at the edge

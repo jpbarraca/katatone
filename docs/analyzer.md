@@ -24,6 +24,39 @@ can tweak the sound (an EQ, say) in the editor and watch the result live.
 - **Right:** the spectrum of the same channel, 20 Hz–20 kHz, with a
   smoothed trace (amber) and a held-peak trace (dim).
 
+## Matching a tone to a recording
+
+The row under the options compares your sound with something else.  It is a guide
+for where to start turning the amp's tone controls, not a measurement of the original
+gear.
+
+- **Reference…** loads the part you want to sound like (WAV, or MP3, FLAC, OGG, M4A,
+  AAC and Opus when `ffmpeg` is installed; the first four minutes are read).  Pauses
+  are left out of the average.  The reference's average spectrum is drawn in blue
+  behind the live one.  **✕** forgets it.
+- **Set A** / **Set B** keep the current average spectrum of the live input as a take.
+  Capture one take, change the amp, capture the other: the take is drawn in green (A) or
+  purple (B).  Nothing is captured until the analyzer has heard sound.
+- **Compare** chooses what the difference panel shows: *Live vs reference*, *Live vs
+  take A*, *Live vs take B* or *Take A vs take B*.
+- **Match level** (on by default) lines the two spectra up over 100 Hz–5 kHz first, so
+  the panel shows the tone and not how loud each was.
+- **Difference panel** (below the spectrum): the first minus the second in dB, ±12 dB
+  full scale; it is filled amber where the first has more and blue where it has less.
+- **Hints** (the box at the bottom): what the reference is like (brightness as a
+  centre frequency and slope in dB per octave, a guess at the gain from the crest
+  factor: *Clean*, *Edge of breakup*, *Crunch* or *High gain*, and the tempo when a clear
+  pulse is found, with delay times that fit it) and, once you are playing, what to turn: the mean
+  difference in the amp's Bass (80–250 Hz), Middle (250 Hz–2 kHz), Treble (2–5 kHz) and
+  Presence (5–10 kHz) ranges, the biggest first; bands within 1.5 dB are left out.
+- **Tap tempo:** tap along with the music; from the second tap it shows the BPM and
+  the matching delay times (quarter, dotted eighth, eighth …).
+
+Compare like with like: play the same part, at a similar picking strength, on the
+channel that carries the amp's output.  A reference mix includes the other
+instruments, so read the hints as direction, not as exact dB.  Messages such as an
+unreadable file stay on the status line for a few seconds.
+
 The amp's USB interface offers four 48 kHz channels; which one carries what
 (amp output, dry guitar) is easiest to find by trying each.  Audio is read with
 `arecord`, so it needs ALSA's `alsa-utils` and `numpy` (installed with

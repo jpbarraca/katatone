@@ -32,14 +32,14 @@ def _cleanup() -> None:
 
 
 async def pick_files(page: ft.Page, picker: ft.FilePicker, title: str,
-                     ext: str, multiple: bool = False) -> list[pathlib.Path]:
+                     ext: "str | tuple[str, ...]", multiple: bool = False) -> list[pathlib.Path]:
     """Let the user choose files; return them as local paths.
 
     Args:
         page: the page (tells desktop from browser).
         picker: the page's ``FilePicker``.
         title: the dialog title.
-        ext: the allowed extension without a dot (``"tsl"``).
+        ext: the allowed extension without a dot (``"tsl"``), or several.
         multiple: allow choosing several files.
     Returns:
         The chosen files; empty when cancelled.
@@ -48,7 +48,8 @@ async def pick_files(page: ft.Page, picker: ft.FilePicker, title: str,
     """
     files = await picker.pick_files(
         dialog_title=title, file_type=ft.FilePickerFileType.CUSTOM,
-        allowed_extensions=[ext], allow_multiple=multiple, with_data=bool(page.web))
+        allowed_extensions=[ext] if isinstance(ext, str) else list(ext),
+        allow_multiple=multiple, with_data=bool(page.web))
     out: list[pathlib.Path] = []
     for f in files or []:
         if page.web:
