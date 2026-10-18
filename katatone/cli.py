@@ -7,9 +7,12 @@ Usage examples:
   python -m katatone write --in IN --out OUT --patch N --tsl file.tsl [--name NAME]
   python -m katatone clear --in IN --out OUT --patch N
   python -m katatone library list|save|import|remove
+  python -m katatone wifi status|set|ensure|retry    (needs NetworkManager)
+  python -m katatone passwd                     (the web GUI password)
 
 Options:
   -v, --verbose   Enable debug logging to terminal
+  --reduce-writes The file system is read-only: remount it rw only while writing
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ import os
 import sys
 import time
 
+from . import rofs
 from .amp.connect import HandshakeError, disconnect, handshake
 from .amp.read import read_patch, read_region
 from .amp.write import clear_patch, select_patch, write_patch
@@ -71,6 +75,76 @@ def _connect(args) -> Transport:
     return t
 
 
+def _wifi(args) -> int:
+    """The ``wifi`` command.
+
+    Args:
+        args: the parsed options.
+    Returns:
+        Exit code: 0 on success, 1 when NetworkManager refuses.
+    """
+    from .net.wifi import IpConfig, Wifi, WifiError
+    w = Wifi()
+    try:
+        if args.action == "status":
+            s, st = w.settings(), w.status()
+            print(json.dumps({"network": s.ssid, "access_point": s.ap_ssid,
+                              "access_point_enabled": s.ap_enabled,
+                              "mode": st.mode, "connected_to": st.ssid,
+                              "address": st.address, "hostname": s.hostname,
+                              "dhcp": s.ip.dhcp, "static": vars(s.ip),
+                              "mdns": s.mdns, "mdns_installed": s.mdns_installed}, indent=1))
+        elif args.action == "set" and (args.hostname or args.mdns is not None) and not any(
+                v is not None and v is not False and v != ""
+                for k, v in vars(args).items() if k in (
+                    "ssid", "key", "ap_ssid", "ap_key", "ap", "dhcp", "address")):
+            if args.hostname:                     # only the device: no reconnect
+                w.set_hostname(args.hostname)
+                print(f"hostname: {args.hostname}")
+            if args.mdns is not None:
+                w.set_mdns(args.mdns)
+                print(f"mdns: {'on' if args.mdns else 'off'}")
+        elif args.action == "set":
+            ip = (IpConfig(False, args.address, args.mask, args.gateway, args.dns)
+                  if args.address else IpConfig() if args.dhcp else None)
+            ssid = w.settings().ssid if args.ssid is None else args.ssid
+            w.configure(ssid, args.key, args.ap_ssid, args.ap_key, args.ap, ip)
+            if args.hostname:
+                w.set_hostname(args.hostname)
+            if args.mdns is not None:
+                w.set_mdns(args.mdns)
+            print(f"connected: {w.ensure(force=True)}")
+        elif args.action == "retry":
+            print(f"connected: {w.try_client()}")
+        else:
+            print(f"connected: {w.ensure()}")
+    except WifiError as e:
+        print(f"wifi: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _passwd() -> int:
+    """The ``passwd`` command: ask for a new web GUI password.
+
+    Returns:
+        Exit code: 0 on success, 1 when it is refused or the prompts differ.
+    """
+    import getpass
+    from .auth import Auth, AuthError
+    pw = getpass.getpass("New password: ")
+    if pw != getpass.getpass("Again: "):
+        print("passwd: the passwords differ", file=sys.stderr)
+        return 1
+    try:
+        Auth().set_password(pw)
+    except (AuthError, OSError) as e:
+        print(f"passwd: {e}", file=sys.stderr)
+        return 1
+    print("password changed")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point: run the command, then exit via ``os._exit`` so
     alsa-lib's atexit destructors are skipped (they segfault on PipeWire).
@@ -100,6 +174,9 @@ def _run(argv: list[str] | None = None) -> int:
     # Debug logging is OFF by default; pass -v/--verbose to trace execution.
     ap.add_argument("-v", "--verbose", action="store_true", dest="verbose",
                     help="enable debug logging to terminal")
+    ap.add_argument("--reduce-writes", action="store_true", dest="reduce_writes",
+                    help="the file system is read-only: remount it read-write "
+                         "only while writing")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("ports", help="list MIDI ports")
@@ -142,9 +219,36 @@ def _run(argv: list[str] | None = None) -> int:
     p.add_argument("--file", help=".tsl file for import")
     p.add_argument("--dir", help="library dir override")
 
+    p = sub.add_parser("wifi", help="Wi-Fi client / access-point fallback")
+    p.add_argument("action", choices=["status", "set", "ensure", "retry"])
+    p.add_argument("--ssid", default=None,
+                   help="network to join ('' = access point only; omit to keep)")
+    p.add_argument("--key", default="", help="its WPA-PSK key (blank: keep)")
+    p.add_argument("--ap-ssid", default="", help="access point name (default KataTone)")
+    p.add_argument("--ap-key", default="", help="access point key (blank: keep)")
+    p.add_argument("--dhcp", action="store_true", help="get the address from the router")
+    p.add_argument("--address", help="static IPv4 address (with --mask); implies no DHCP")
+    p.add_argument("--mask", default="", help="subnet mask: 255.255.255.0 or 24")
+    p.add_argument("--gateway", default="", help="static gateway")
+    p.add_argument("--dns", default="", help="static DNS servers, space or comma separated")
+    p.add_argument("--hostname", help="set the device's host name")
+    p.add_argument("--mdns", action=argparse.BooleanOptionalAction, default=None,
+                   help="answer to <host name>.local (avahi-daemon): on or off")
+    p.add_argument("--ap", action=argparse.BooleanOptionalAction, default=None,
+                   help="use the access point as the fallback (default: keep)")
+
+    sub.add_parser("passwd", help="set the web GUI password")
+
     args = ap.parse_args(argv)
     _setup_logging(args.verbose)
-    log.debug("katatone %s %s", args.cmd, vars(args))
+    rofs.enable(args.reduce_writes)
+    log.debug("katatone %s %s", args.cmd,
+              {k: v for k, v in vars(args).items() if k not in ("key", "ap_key")})
+
+    if args.cmd == "wifi":
+        return _wifi(args)
+    if args.cmd == "passwd":
+        return _passwd()
 
     if args.cmd == "ports":
         print(json.dumps(list_alsa_ports(), indent=1))
