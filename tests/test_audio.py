@@ -157,3 +157,20 @@ def test_linear_spectrum_has_evenly_spaced_points_and_finds_the_tone() -> None:
     s.push(sine(5000, 0.5))
     spec = s.compute()
     assert abs(s.freqs[int(np.argmax(spec))] - 5000) < 120
+
+
+def test_each_string_spans_its_open_note_to_its_highest_fret() -> None:
+    from katatone.audio import bands
+    rng = {name: (f_lo, top, f_hi) for name, f_lo, top, f_hi in bands.string_ranges()}
+    assert rng["E2"][1] == "D4" and rng["E4"][1] == "D6" and rng["A2"][1] == "G4"
+    for name, f in bands.STRINGS:
+        f_lo, _, f_hi = rng[name]
+        assert f_lo == f and f_hi == pytest.approx(f * 2 ** (bands.FRETS / 12))
+    assert rng["E2"][2] == pytest.approx(293.66, abs=0.1)         # D4
+    assert bands.string_ranges(12)[0][2:] == ("E3", pytest.approx(164.82, abs=0.05))
+
+
+def test_note_names_wrap_octaves() -> None:
+    from katatone.audio import bands
+    assert bands.note_above("B3", 1) == "C4" and bands.note_above("E4", 0) == "E4"
+    assert bands.note_above("G3", 22) == "F5"
