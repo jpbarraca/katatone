@@ -4,8 +4,8 @@ A Linux patch editor for the **BOSS Katana 50 Gen 3** amplifier.
 
 Edit every parameter of a patch, keep a local library of patches, download
 patches from BOSS Tone Central, and control the amp from MIDI footswitches,
-pedals and keyboards.  It talks to the amp over USB-MIDI; a command-line
-interface covers the same operations without the GUI.
+pedals and keyboards.  It talks to the amp over USB-MIDI, and runs as a desktop
+window or as a browser interface, for example on a Raspberry Pi next to the amp.
 
 ![KataTone: the patch editor](docs/screenshot.png)
 
@@ -20,68 +20,41 @@ interface covers the same operations without the GUI.
 - **Library** — save patches into livesets (`.tsl` files) and write them back to the amp
 - **Tone Central** — browse and download patches from the official BOSS site
   ([details](docs/tone-central.md))
-- **Analyzer** — a second window with a level meter and spectrum of the amp's
-  USB audio, to watch the result of a tweak ([details](docs/analyzer.md))
+- **Analyzer** — level meter and spectrum of the amp's USB audio
+  ([details](docs/analyzer.md))
+- **Tuner** — a guitar tuner for the amp's audio input ([details](docs/tuner.md))
 - **System settings** — edit the amp's global settings
 - **MIDI controllers** — switch channels, toggle effects and drive wah / volume
   from pedals and keyboards ([details](docs/midi-controllers.md))
+- **Browser interface** — the same app in a browser, with a login
+  ([details](docs/web.md))
+- **Raspberry Pi** — headless use, Wi-Fi with an access-point fallback, read-only
+  file system ([details](docs/raspberry-pi.md))
 
 ## Install
 
-Needs Linux and Python 3.10+.  With [pipx](https://pipx.pypa.io/):
+Needs Linux and Python 3.10+:
 
 ```bash
-pipx install --system-site-packages "katatone[gui] @ git+https://github.com/jpbarraca/katatone"
+pipx install --system-site-packages "katatone[desktop] @ git+https://github.com/jpbarraca/katatone"
 ```
 
-The Analyzer needs `arecord` (package `alsa-utils`).  Tone Central (in the
-Library tab) also needs WebKitGTK and PyGObject from your distribution
-(`webkit2gtk-4.1-0 python3-gi gir1.2-webkit2-4.1` on Debian/Ubuntu,
-`webkit2gtk4.1 python3-gobject` on Fedora).  Upgrade with
-`pipx upgrade katatone`.
+Extras, system packages and troubleshooting: [Install](docs/install.md).
 
 ## Use
 
-Connect the amp with a USB cable and run:
+Connect the amp with a USB cable and run `katatone-gui` (or `katatone-gui --web` for
+the browser).  It connects to the amp by itself.  Edit a tone in the **PATCH** tab,
+then **Save to library** to keep it, or **Write** to store it in an amp slot.
 
-```bash
-katatone-gui
-```
-
-Pick the amp in the **Amp** dropdown (it shows as `KATANA3`) and click
-**Connect**.  Edit a tone in the **PATCH** tab, then **Save to library** to
-keep it, or **Write** to store it in an amp slot.
-
-Command line: `katatone ports`, `katatone read --in KATANA3 --out KATANA3
---patch 0`, ... — see `katatone --help`.
-
-**Troubleshooting**
-
-- *Amp not listed* — check the cable; `lsusb | grep -i roland` should show it.
-- *"Permission denied"* — add yourself to the `audio` group
-  (`sudo usermod -aG audio $USER`) and log in again.
-- *Port busy* — close any other program using the amp's MIDI port.
+There is also a command line: `katatone ports`, `katatone read --in KATANA3 --out
+KATANA3 --patch 0`, ... — see `katatone --help`.
 
 ## Terms of service
 
-KataTone does not aim to violate the BOSS TONE EXCHANGE
-[terms of service](https://bosstoneexchange.com/terms_and_conditions/), and it is
-built to stay within them:
-
-- It does not scrape, crawl or use bots, and it makes no requests of its own to the
-  site. Tone Central is simply the official website shown in a window, and you
-  browse and download by hand, as in any browser.
-- You sign in with your own BOSS ID on the site itself. KataTone never sees your
-  password; it only keeps the site's session cookie on your machine like a standard 
-  browser.
-- It does not copy, mirror or resell the site or its content. Downloads go to your
-  own library, and sharing livesets you do not have the right to share is up to you.
-- The only change to the page is a small script that lets its Download button save
-  a file in a single-window app to the software library location.
-
-The site and everything on it belong to Roland and BOSS. This project is
-independent and has no affiliation with them. If you are a rights holder and see a
-problem, please open an issue.
+KataTone makes no requests of its own to the BOSS TONE EXCHANGE and is built to
+stay within its [terms of service](https://bosstoneexchange.com/terms_and_conditions/);
+the details are in [Tone Central](docs/tone-central.md#terms-of-service).
 
 ## More
 
