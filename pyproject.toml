@@ -6,7 +6,11 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
+# The GUI itself; add `desktop` (a window), `web` (a browser, e.g. a headless
+# Raspberry Pi) or both, so each machine installs only what it uses.
 gui = ["flet>=1.0", "numpy>=1.26"]
+desktop = ["katatone[gui]", "flet-desktop>=1.0"]
+web = ["katatone[gui]", "flet-web>=1.0"]
 dev = ["pytest>=8", "platformdirs"]
 
 [project.scripts]
