@@ -28,4 +28,4 @@ build-backend = "setuptools.build_meta"
 include = ["katatone*"]
 
 [tool.setuptools.package-data]
-katatone = ["assets/address_map.json"]
+katatone = ["assets/address_map.json", "gui/param_labels.json"]
