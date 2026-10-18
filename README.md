@@ -7,6 +7,8 @@ patches from BOSS Tone Central, and control the amp from MIDI footswitches,
 pedals and keyboards.  It talks to the amp over USB-MIDI; a command-line
 interface covers the same operations without the GUI.
 
+![KataTone: the patch editor](docs/screenshot.png)
+
 > **Unofficial.**  Not affiliated with or endorsed by Roland or BOSS.  BOSS,
 > Katana, BOSS TONE EXCHANGE and BOSS TONE CENTRAL are trademarks of Roland.
 > Writing to an amp is at your own risk: save your patches to the library
