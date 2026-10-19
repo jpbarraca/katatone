@@ -11,7 +11,7 @@ You need Flatpak and the GNOME 50 runtime (Flatpak fetches it when it is missing
 
 ```bash
 flatpak install --user flathub org.gnome.Platform//50
-flatpak install --user katatone-0.4.0-x86_64.flatpak     # the file from the release page
+flatpak install --user katatone-0.4.1-x86_64.flatpak     # the file from the release page
 flatpak run io.github.jpbarraca.katatone
 ```
 
@@ -48,7 +48,7 @@ To make the file for a release (after building as above, with `--repo=/tmp/katat
 added to the `flatpak-builder` command):
 
 ```bash
-flatpak build-bundle /tmp/katatone-repo katatone-0.4.0-x86_64.flatpak io.github.jpbarraca.katatone master
+flatpak build-bundle /tmp/katatone-repo katatone-0.4.1-x86_64.flatpak io.github.jpbarraca.katatone master
 ```
 
 Two parts are pinned and have to be refreshed by hand when they change:
