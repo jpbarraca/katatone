@@ -181,9 +181,14 @@ def list_devices(name_filter: str = "katana") -> list[BleDevice]:
     """The paired BLE-MIDI devices whose name contains ``name_filter``.
 
     Returns:
-        The devices; empty when BlueZ or ``dbus-fast`` is not available.
+        The devices; empty when BlueZ or ``dbus-fast`` is not available, or when
+        ``KATATONE_NO_BLUETOOTH`` is set (a package without Bluetooth support, such
+        as the Flatpak, sets it so that no "needs dbus-fast" message is shown).
     """
     global problem
+    if os.environ.get("KATATONE_NO_BLUETOOTH"):
+        problem = None
+        return []
     try:
         aio, fast = _dbus()
     except BleError as e:

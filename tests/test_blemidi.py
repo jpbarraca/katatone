@@ -148,6 +148,19 @@ def test_a_missing_dbus_fast_is_reported_when_the_machine_has_bluetooth(monkeypa
     assert ble.problem is None
 
 
+def test_a_package_without_bluetooth_can_switch_it_off_silently(monkeypatch) -> None:
+    def no_dbus():
+        raise ble.BleError("Bluetooth needs the dbus-fast package (pip install 'katatone[bluetooth]')")
+    monkeypatch.setattr(ble, "_dbus", no_dbus)
+    monkeypatch.setattr(ble, "_has_adapter", lambda: True)
+    monkeypatch.setenv("KATATONE_NO_BLUETOOTH", "1")
+    ble.problem = "stale"
+    assert ble.list_devices() == [] and ble.problem is None      # not even a message
+    monkeypatch.delenv("KATATONE_NO_BLUETOOTH")
+    ble.list_devices()
+    assert "dbus-fast" in ble.problem                            # without it, as before
+
+
 def test_listing_works_from_inside_a_running_event_loop() -> None:
     """The window is built on an event loop, where asyncio.run() is forbidden."""
     import asyncio
