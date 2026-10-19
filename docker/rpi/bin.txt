@@ -1,0 +1,7 @@
+# contents of bin.tar.xz, 2026-10-19
+linux: 7.3.0 (pi5), 7.3.0 (pi3)
+busybox: 1.37.0 (static, configs/busybox.config)
+hostapd: hostapd-2.11
+pi3-boot: raspberrypi/firmware 6c87074190d5
+sysroot: 59 Ubuntu 26.04 arm64 packages
+sha256: 6f45297b07b3daeb
