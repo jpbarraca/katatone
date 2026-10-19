@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=KataTone
+GenericName=Amp patch editor
+Comment=Edit and manage patches of the BOSS Katana 50 Gen 3
+Exec=katatone-gui
+Icon=io.github.jpbarraca.katatone
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+Keywords=katana;boss;amp;guitar;midi;tuner;patch;
+StartupNotify=true

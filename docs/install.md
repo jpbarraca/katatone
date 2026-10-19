@@ -1,6 +1,7 @@
 # Install and troubleshooting
 
-Needs Linux and Python 3.10+.  With [pipx](https://pipx.pypa.io/):
+Needs Linux and Python 3.10+.  The desktop GUI is also available as a
+[Flatpak](flatpak.md) (amp over USB; no Python needed).  With [pipx](https://pipx.pypa.io/):
 
 ```bash
 pipx install --system-site-packages "katatone[desktop] @ git+https://github.com/jpbarraca/katatone"

@@ -43,6 +43,8 @@ pipx install --system-site-packages "katatone[desktop] @ git+https://github.com/
 
 Extras, system packages and troubleshooting: [Install](docs/install.md).
 
+The desktop GUI is also available as a [Flatpak](docs/flatpak.md) (amp over USB, no Python needed).
+
 ## Use
 
 Connect the amp with a USB cable and run `katatone-gui` for the window or `katatone-web` for

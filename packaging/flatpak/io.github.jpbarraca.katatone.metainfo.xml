@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.jpbarraca.katatone</id>
+  <name>KataTone</name>
+  <summary>Patch editor for the BOSS Katana 50 Gen 3</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <developer id="io.github.jpbarraca">
+    <name>João Paulo Barraca</name>
+  </developer>
+  <description>
+    <p>KataTone edits the patches of a BOSS Katana 50 Gen 3 amplifier over USB, keeps them in a library of livesets (.tsl files) and writes them back to the amp.</p>
+    <p>It also has an Analyzer that compares your tone with a reference recording and proposes EQ settings, and a guitar Tuner that checks intonation at the 12th fret.</p>
+  </description>
+  <launchable type="desktop-id">io.github.jpbarraca.katatone.desktop</launchable>
+  <url type="homepage">https://github.com/jpbarraca/katatone</url>
+  <url type="bugtracker">https://github.com/jpbarraca/katatone/issues</url>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Audio</category>
+    <category>Music</category>
+  </categories>
+  <releases>
+    <release version="0.4.1" date="2026-10-19">
+      <description>
+        <p>Available as a Flatpak (the desktop GUI, with the amp over USB).</p>
+      </description>
+    </release>
+    <release version="0.4.0" date="2026-10-19">
+      <description>
+        <p>New Analyzer tools to match a tone to a recording, and a tuner that checks intonation.</p>
+      </description>
+    </release>
+  </releases>
+</component>

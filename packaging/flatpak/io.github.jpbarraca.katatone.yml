@@ -1,0 +1,86 @@
+# Flatpak manifest for the KataTone GUI (amp over USB; no Bluetooth).
+# Build and install:  flatpak-builder --user --install --force-clean build-dir io.github.jpbarraca.katatone.yml
+id: io.github.jpbarraca.katatone
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: katatone-gui
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  # Not fallback-x11: Flet decides it runs on a headless server when DISPLAY is unset, which
+  # it is in a Wayland session unless the X11 socket is given too.
+  - --socket=x11
+  # The amp's MIDI ports are /dev/snd/midiC*D* and the sound card is read with arecord:
+  # both need the sound devices.
+  - --device=all
+  - --socket=pulseaudio
+  # The Tone Central window and its downloads.
+  - --share=network
+  # Where the Flet desktop client is (bundled below: it would otherwise be downloaded at
+  # the first start), and Bluetooth is not part of this package.
+  - --env=FLET_VIEW_PATH=/app/flet-client/flet
+  - --env=KATATONE_NO_BLUETOOTH=1
+
+modules:
+  # arecord, used by the Tuner and the Analyzer to read the sound card.
+  - name: alsa-utils
+    buildsystem: autotools
+    config-opts:
+      - --disable-alsamixer
+      - --disable-alsaconf
+      - --disable-bat
+      - --disable-nls
+      - --disable-xmlto
+      - --disable-rst2man
+      - --with-udev-rules-dir=/app/lib/udev/rules.d
+      - --with-systemdsystemunitdir=/app/lib/systemd/system
+      - --with-asound-state-dir=/app/var/lib/alsa
+    cleanup: ['/share/man', '/share/sounds', '/lib/udev', '/lib/systemd', '/var', '/sbin']
+    sources:
+      - type: archive
+        url: https://www.alsa-project.org/files/pub/utils/alsa-utils-1.2.14.tar.bz2
+        sha256: 0794c74d33fed943e7c50609c13089e409312b6c403d6ae8984fc429c0960741
+
+  # The Linux file chooser of the Flet client runs zenity; 4.x asks the desktop portal,
+  # so it can reach the user's files from the sandbox.
+  - name: zenity
+    buildsystem: meson
+    config-opts:
+      - -Dwebkitgtk=false
+      - -Dmanpage=false
+    cleanup: ['/share/help', '/share/man', '/share/icons', '/share/applications', '/share/metainfo']
+    sources:
+      - type: archive
+        url: https://download.gnome.org/sources/zenity/4.2/zenity-4.2.2.tar.xz
+        sha256: 019186a996096ef4fc356e21577b5673f5baa3a29ac8e3d608b753371c18018d
+
+  # flet, flet-desktop, numpy and what they need, as wheels (python3-deps.json is made by
+  # flatpak-pip-generator, see docs/flatpak.md).
+  - python3-deps.json
+
+  # The prebuilt Flet desktop client the flet-desktop package would download.
+  - name: flet-client
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/flet-client
+      - cp -a flet /app/flet-client/flet
+    sources:
+      - type: archive
+        url: https://github.com/flet-dev/flet/releases/download/v1.0.4/flet-linux-ubuntu24.04-light-amd64.tar.gz
+        sha256: f020907cfe279189d5a1864abab5707646ac3f38bb08bd6be3c389ac52246b12
+        strip-components: 0
+
+  - name: katatone
+    buildsystem: simple
+    build-commands:
+      - pip3 install --no-index --no-deps --no-build-isolation --prefix=/app .
+      - install -Dm644 packaging/flatpak/io.github.jpbarraca.katatone.desktop -t /app/share/applications
+      - install -Dm644 packaging/flatpak/io.github.jpbarraca.katatone.metainfo.xml -t /app/share/metainfo
+      - install -Dm644 packaging/flatpak/io.github.jpbarraca.katatone.svg
+        /app/share/icons/hicolor/scalable/apps/io.github.jpbarraca.katatone.svg
+    sources:
+      - type: dir
+        path: ../..
+        skip: [.git, build, tests, katatone.egg-info, __pycache__, .pytest_cache]
