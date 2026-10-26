@@ -373,8 +373,10 @@ def _run(argv: list[str] | None = None) -> int:
             for e in lib.list():
                 print(f"{e.name:30s} {e.path}")
         elif args.action == "import":
-            p = lib.import_file(args.file)
+            p, notes = lib.import_file_with_notes(args.file)
             print(f"imported -> {p}")
+            for note in notes:
+                print(f"  {note}")
         elif args.action == "remove":
             lib.remove(args.name)
         else:

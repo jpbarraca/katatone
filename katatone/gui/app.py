@@ -1629,8 +1629,14 @@ class App:
             path: the ``.tsl`` file to import.
         """
         try:
-            p = self.lib.import_file(path)
-            self.set_status(f"Imported -> {p}")
+            p, notes = self.lib.import_file_with_notes(path)
+            extra = ""
+            if notes:                     # a MkII liveset: say so, the memos have the details
+                extra = f".  {notes[0]}: check the patches before using them"
+                if len(notes) > 1:
+                    n = len(notes) - 1
+                    extra += f" ({n} note{'s' if n != 1 else ''} in the patch memos)"
+            self.set_status(f"Imported -> {p}{extra}")
             self.library_refresh()
         except Exception as e:                       # noqa: BLE001
             self.set_status(f"Import failed: {e}")

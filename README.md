@@ -22,7 +22,7 @@ window or as a browser interface, for example on a Raspberry Pi next to the amp.
 - **Patch editor** — all parameters of a patch, with live edits sent to the amp
   and undo / redo (Ctrl+Z, Ctrl+Shift+Z)
 - **Library** — save patches into livesets (`.tsl` files) and write them back to the amp;
-  search, tags and favourites; compare a patch with the editor
+  search, tags and favourites; compare a patch with the editor; import KATANA MkII livesets
   ([details](docs/library.md))
 - **Setlist** — play the patches of a liveset in order from big on-screen buttons or a
   MIDI footswitch ([details](docs/setlist.md))

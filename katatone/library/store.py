@@ -278,10 +278,34 @@ class Library:
         Returns:
             The path of the file as stored in the library.
         """
+        return self.import_file_with_notes(src)[0]
+
+    def import_file_with_notes(self, src: str | Path) -> tuple[Path, list[str]]:
+        """Import a ``.tsl`` file; one from a KATANA MkII is converted to the Gen 3.
+
+        Args:
+            src: the ``.tsl`` file to import.
+        Returns:
+            ``(path, notes)``: the stored file, and what to know about it (empty for a
+            Gen 3 file; for a MkII one, that it was converted and what could not be).
+        Raises:
+            ValueError: if the file is not a usable liveset of a Katana Gen 3 or MkII.
+        """
+        from ..liveset import mkii
         src = Path(src)
-        tsl = Tsl.load(src)          # validates device
+        try:
+            device = json.loads(src.read_text(encoding="utf-8-sig")).get("device")
+        except (OSError, ValueError, AttributeError) as e:
+            raise ValueError(f"cannot read {src.name}: {e}") from None
+        notes: list[str] = []
+        if mkii.is_mkii(device):
+            converted = mkii.convert_liveset(json.loads(src.read_text(encoding="utf-8-sig")))
+            tsl = converted.tsl
+            notes = [f"Converted from a {mkii.MKII_DEVICE} liveset", *converted.notes]
+        else:
+            tsl = Tsl.load(src)          # validates device
         tsl.name = self.unique_name(tsl.name or src.stem)
-        return self.save(tsl)
+        return self.save(tsl), notes
 
     def remove(self, name: str) -> None:
         """Delete a stored liveset file (no error if it is missing).

@@ -23,7 +23,7 @@ katatone/
   address/      Static address map (15 regions; data in katatone/assets/)
   model/        ParamSet — decode/encode params from raw block bytes
   amp/          Connect handshake, read/write patch & system, whole-amp backup
-  liveset/      .tsl liveset file format
+  liveset/      .tsl liveset file format; mkii.py converts KATANA MkII livesets (assets/mkii_map.json)
   library/      Local patch library (~/.local/share/katatone/)
   remote/       Confined Tone Exchange (Tone Central) window
   midi/         Controller input: parser, mappings, router, learn, profiles
