@@ -1609,7 +1609,7 @@ def web_banner(host: str, port: int, default_password: bool = False) -> str:
         text += (f"\nNote: listening on {host}: the login password and the "
                  "session travel over plain HTTP; use it on a network you trust.")
     if default_password:
-        text += (f"\nThe password is still the factory one ({auth_mod.DEFAULT_PASSWORD}); "
+        text += ("\nThe factory password is still set; "
                  "you will be asked to change it at the first login.")
     return text
 

@@ -6,7 +6,7 @@ import types
 
 import pytest
 
-from katatone.auth import LaunchTokens
+from katatone.auth import DEFAULT_PASSWORD, LaunchTokens
 from katatone.gui import app as gui_app
 
 
@@ -18,6 +18,13 @@ def test_flags_default_to_a_desktop_window() -> None:
 def test_wifi_is_off_unless_asked_for() -> None:
     assert gui_app._parse_args(["--web"]).wifi is False
     assert gui_app._parse_args(["--web", "--wifi"]).wifi is True
+
+
+def test_web_banner_warns_about_default_password_without_printing_it() -> None:
+    banner = gui_app.web_banner("127.0.0.1", 8550, default_password=True)
+    assert "factory password is still set" in banner
+    assert "change it at the first login" in banner
+    assert DEFAULT_PASSWORD not in banner
 
 
 class _FakeApp:
