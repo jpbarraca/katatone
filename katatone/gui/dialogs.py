@@ -39,7 +39,7 @@ def prompt(page: ft.Page, title: str, value: str, on_ok: Callable[[str], None],
 
 
 def confirm(page: ft.Page, text: str, on_ok: Callable[[], None],
-            label: str = "Delete") -> None:
+            label: str = "Delete", icon=ft.Icons.DELETE_OUTLINE) -> None:
     """Show a confirmation dialog.
 
     Args:
@@ -47,6 +47,7 @@ def confirm(page: ft.Page, text: str, on_ok: Callable[[], None],
         text: the question.
         on_ok: called when the confirm button is pressed.
         label: the confirm button's text.
+        icon: the confirm button's icon.
     """
     ft.context.disable_auto_update()
 
@@ -59,4 +60,4 @@ def confirm(page: ft.Page, text: str, on_ok: Callable[[], None],
         title=ft.Text("Confirm"), content=ft.Text(text), bgcolor=theme.PANEL_TOP,
         actions=[pv.link_button("Cancel", lambda e: page.pop_dialog(),
                                 color=theme.MUTED),
-                 pv.button(label, ft.Icons.DELETE_OUTLINE, ok, primary=True)]))
+                 pv.button(label, icon, ok, primary=True)]))

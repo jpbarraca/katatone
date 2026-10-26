@@ -20,7 +20,7 @@ import urllib.parse
 import flet as ft
 
 from ..address.map import load_map
-from .. import auth as auth_mod
+from .. import __version__, auth as auth_mod
 from .. import rofs
 from ..amp import slots
 from ..amp.live import LiveWriter
@@ -29,6 +29,8 @@ from ..midi.manager import MidiManager
 from ..model.paramset import ParamSet
 from ..protocol import rc6
 from . import theme
+from .history import EditHistory
+from .model import display_label
 from .headless import HeadlessPage
 from . import (library_pane, login, midi_pane, patch_editor, statusbar, system_pane)
 
@@ -123,6 +125,7 @@ class App:
         self.patch_number = 0
         self.ps = ParamSet()            # working patch
         self.dirty = False
+        self.history = EditHistory()    # undo / redo of the edits to `ps`
         self.system_ps: ParamSet | None = None
         self.lib = Library()
         # Popen of the confined Tone Exchange webview (see tonecentral_open).
@@ -190,6 +193,7 @@ class App:
         p.window.min_height = 640
         p.theme = ft.Theme(color_scheme_seed=theme.ACCENT)
         p.dark_theme = ft.Theme(color_scheme_seed=theme.ACCENT)
+        p.on_keyboard_event = self._on_key
 
         self.status_text = ft.Text(self.last_status, color=theme.MUTED, size=13)
         self.progress = ft.ProgressBar(visible=False, height=4,
@@ -1089,6 +1093,60 @@ class App:
         if self._live():
             self.live.queue_name(name)
 
+    # ------------------------------------------------------------ undo / redo
+
+    def _on_key(self, e: ft.KeyboardEvent) -> None:
+        """Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes an edit, unless the
+        name field has the focus (it has its own undo)."""
+        if not (e.ctrl or e.meta) or self.editor.name_field_focused:
+            return
+        key = e.key.lower()
+        if key == "z":
+            self.redo() if e.shift else self.undo()
+        elif key == "y":
+            self.redo()
+
+    def undo(self) -> None:
+        """Take back the last edit to the patch in the editor."""
+        self._step(self.history.undo, "old", "Undid")
+
+    def redo(self) -> None:
+        """Make the edit that was undone last again."""
+        self._step(self.history.redo, "new", "Redid")
+
+    def _step(self, take, side: str, verb: str) -> None:
+        """Apply one history step to the patch, the editor and the amp.
+
+        Args:
+            take: ``history.undo`` or ``history.redo``.
+            side: the edit's value to set, ``"old"`` or ``"new"``.
+            verb: how the status line starts.
+        """
+        if self.busy:
+            return self.set_status("Wait for the current operation to finish.")
+        with self.state_lock:
+            edit = take(self.ps)
+            if edit is not None:
+                value = getattr(edit, side)
+                if edit.key[0] == "name":
+                    self.ps.set_block("PATCH%COM", value)
+                    what = "the patch name"
+                else:
+                    _, block, p_index = edit.key
+                    region = self.region_for(self.patch_number)
+                    self.ps.set_param(region, block, p_index, value)
+                    what = display_label(region.block(block).params[p_index].name, block)
+        if edit is None:
+            return self.set_status("Nothing to " + ("undo." if side == "old" else "redo."))
+        self.mark_dirty()
+        if edit.key[0] == "name":
+            self.name_changed(ParamSet.patch_name(value))
+        else:
+            self.param_changed(block, p_index, value)
+        self.set_status(f"{verb} {what}.")
+        if self.ui_attached:
+            self.editor.refresh()
+
     def _synced(self) -> None:
         """Editor and amp now agree (after Read / Write): nothing pending."""
         self.live.clear()
@@ -1143,6 +1201,75 @@ class App:
         self.progress.value = done / total if total else 0
         self.progress.update()
 
+    def _step_progress(self, done: int, total: int, text: str) -> None:
+        """Like :meth:`_progress` for a job in steps (a backup or restore)."""
+        if not self.ui_attached:
+            return
+        self.status_text.value = f"{text}… ({done}/{total})"
+        self.status_text.update()
+        self.progress.value = done / total if total else 0
+        self.progress.update()
+
+    # ------------------------------------------------------- backup / restore
+
+    def backup_amp(self, on_done) -> None:
+        """Read the ten user patches and the system settings in the background.
+
+        Args:
+            on_done: coroutine function called with the ``Backup`` on the
+                page's event loop (it offers the file to the user); not
+                called on failure.
+        """
+        if self._require_connected():
+            self.page.run_thread(self._backup_thread, on_done)
+
+    def _backup_thread(self, on_done) -> None:
+        """Worker for :meth:`backup_amp`."""
+        from ..amp.backup import read_backup
+        self.set_busy(True, "Backing up the amp…")
+        try:
+            backup = read_backup(self.transport, self._step_progress)
+        except Exception as e:                       # noqa: BLE001
+            self.set_status(f"Backup failed: {e}")
+            return
+        finally:
+            self.set_busy(False)
+        self.set_status("Backup read.")
+        self.page.run_task(on_done, backup)
+
+    def restore_amp(self, backup) -> None:
+        """Write a backup to the amp in the background: all ten user patches
+        and the system settings. What the amp holds is first kept in the data
+        directory.
+
+        Args:
+            backup: the ``Backup`` to write.
+        """
+        if self._require_connected():
+            self.page.run_thread(self._restore_thread, backup)
+
+    def _restore_thread(self, backup) -> None:
+        """Worker for :meth:`restore_amp`."""
+        from ..amp.backup import read_backup, save_before_restore, write_backup
+        self.set_busy(True, "Restoring the amp…")
+        self.busy_writing = True
+        done = False
+        try:
+            kept = save_before_restore(read_backup(
+                self.transport,
+                lambda i, n, text: self._step_progress(i, n, "Keeping a copy: " + text)))
+            write_backup(self.transport, backup, self._step_progress)
+            self.system_ps = backup.system
+            self.set_status(f"Restored the amp; what it held before is in {kept}.")
+            done = True
+        except Exception as e:                       # noqa: BLE001
+            self.set_status(f"Restore failed: {e}")
+        finally:
+            self.busy_writing = False
+            self.refresh()
+        if done:
+            self.read_patch(self.patch_number)       # the editor shows the restored slot
+
     # ------------------------------------------------------- system region
 
     def _on_tab_change(self, e: ft.ControlEvent) -> None:
@@ -1181,7 +1308,7 @@ class App:
                 write it back to the amp.
         """
         from ..amp.read import read_region
-        from ..amp.write import _dt1_chunked
+        from ..amp.write import write_system
         self.set_busy(True, f"{'Reading' if op == 'load' else 'Writing'} system…")
         self.busy_writing = op == "save"
         try:
@@ -1191,12 +1318,7 @@ class App:
                     progress=lambda d, tot: self._progress(d, tot, "Reading system"))
                 self.set_status("Read SYSTEM region.")
             else:
-                ps = self.system_ps
-                region = self._map["SYSTEM"]
-                for b in region.blocks:
-                    data = ps.block(ParamSet.block_key(region.name, b.name))
-                    if data:
-                        _dt1_chunked(self.transport, b.base_addr, data)
+                write_system(self.transport, self.system_ps)
                 self.set_status("Wrote SYSTEM region.")
         except Exception as e:                       # noqa: BLE001
             self.set_status(f"System {'read' if op == 'load' else 'write'} failed: {e}")
@@ -1557,6 +1679,7 @@ def _parse_args(argv: list[str], web: bool = False):
     parser = argparse.ArgumentParser(
         prog=prog, formatter_class=argparse.RawDescriptionHelpFormatter,
         description=description, epilog="examples:\n" + examples)
+    parser.add_argument("--version", action="version", version=f"{prog} {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true", dest="verbose", default=False,
                         help="trace to the terminal (stderr); writes no file")
     # The browser flags: listed for katatone-web, accepted (hidden) by katatone-gui.

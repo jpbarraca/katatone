@@ -22,14 +22,14 @@ katatone/
                 (ALSA rawmidi device I/O, sysex reassembly)
   address/      Static address map (15 regions; data in katatone/assets/)
   model/        ParamSet — decode/encode params from raw block bytes
-  amp/          Connect handshake, read/write patch & system
+  amp/          Connect handshake, read/write patch & system, whole-amp backup
   liveset/      .tsl liveset file format
   library/      Local patch library (~/.local/share/katatone/)
   remote/       Confined Tone Exchange (Tone Central) window
   midi/         Controller input: parser, mappings, router, learn, profiles
   net/          Wi-Fi client / access-point fallback (NetworkManager)
   auth.py       Web GUI password (hashed, with lockout)
-  gui/          Flet desktop application (data-driven editor, MIDI tab)
+  gui/          Flet desktop application (data-driven editor, undo history, MIDI tab)
   cli.py        Command-line interface
 dev/            Live-amp check scripts (need connected hardware)
 tests/          pytest suite (protocol, model, amp, MIDI routing, GUI)
@@ -45,3 +45,6 @@ The tests run headlessly (no amp or MIDI hardware needed; the MIDI backend is
 tested against fake `/dev/snd` trees, and the GUI tests build Flet controls
 without a window).  The `dev/` scripts are the opposite: they talk to a real
 amp.
+
+GitHub Actions runs the same suite (`.github/workflows/tests.yml`) on every
+push to `master` and every pull request.

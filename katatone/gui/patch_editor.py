@@ -85,7 +85,9 @@ class PatchEditor:
         self.list_box = ft.Column(spacing=2)
         self.name_field = ft.TextField(
             label="Patch name", max_length=16, value="",
-            on_change=self._on_name, **pv.FIELD_STYLE)
+            on_change=self._on_name, on_focus=lambda e: self._name_focus(True),
+            on_blur=lambda e: self._name_focus(False), **pv.FIELD_STYLE)
+        self.name_field_focused = False
         self.dirty_label = ft.Text("", size=12, color=theme.DANGER)
         buttons = ft.Column([
             ft.Row([_button("Read", ft.Icons.DOWNLOAD,
@@ -97,6 +99,9 @@ class PatchEditor:
                             lambda e: self.app.select_patch(n())),
                     _button("Clear", ft.Icons.DELETE_OUTLINE,
                             lambda e: self.app.clear_patch(n()))],
+                   spacing=6),
+            ft.Row([_button("Undo", ft.Icons.UNDO, lambda e: self.app.undo()),
+                    _button("Redo", ft.Icons.REDO, lambda e: self.app.redo())],
                    spacing=6),
             ft.Row([_button("Save to library", ft.Icons.LIBRARY_ADD,
                             lambda e: self._save_to_library())],
@@ -186,12 +191,19 @@ class PatchEditor:
         self._rebuild_left()
         self.left.update()
 
+    def _name_focus(self, focused: bool) -> None:
+        """Remember whether the name field has the focus, so that Ctrl+Z there
+        is the field's own undo and not the editor's."""
+        self.name_field_focused = focused
+
     def _on_name(self, e) -> None:
         """Name-field handler: encode the new name into the PATCH%COM block,
         mark the patch dirty and notify the app."""
         raw = bytearray(16)
         raw[:16] = ParamSet.encode_patch_name(e.control.value)
-        self.app.ps.set_block("PATCH%COM", bytes(raw))
+        ps = self.app.ps
+        self.app.history.record(ps, ("name",), ps.block("PATCH%COM"), bytes(raw))
+        ps.set_block("PATCH%COM", bytes(raw))
         self.app.mark_dirty()
         self.app.name_changed(e.control.value)
 
@@ -520,6 +532,10 @@ class PatchEditor:
         # + the small dirty label, never a page-wide update).
         val = max(row.param.min, min(row.param.max, int(val)))
         region = self.app.region_for(self.app.patch_number)
-        self.app.ps.set_param(region, row.block, row.p_index, val)
+        ps = self.app.ps
+        self.app.history.record(
+            ps, ("param", row.block, row.p_index),
+            ps.get_param(region, row.block, row.p_index), val)
+        ps.set_param(region, row.block, row.p_index, val)
         self.app.mark_dirty()
         self.app.param_changed(row.block, row.p_index, val)

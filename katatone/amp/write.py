@@ -119,17 +119,43 @@ def write_patch_keep_sound(t: Transport, patch_number: int, ps: ParamSet,
     """
     from .read import read_region
     keep = read_region(t, "PATCH")                   # the sound as it is now
-    edit = load_map()["PATCH"]
     try:
         write_patch(t, patch_number, ps, name)
     finally:
-        try:
-            for bname in PATCH_BLOCKS:
-                data = keep.block(f"PATCH%{bname}")
-                if data:
-                    _dt1_chunked(t, edit.block(bname).base_addr, data)
-        except Exception:                            # noqa: BLE001
-            log.warning("could not put the edit buffer back", exc_info=True)
+        put_back_edit_buffer(t, keep)
+
+
+def put_back_edit_buffer(t: Transport, keep: ParamSet) -> None:
+    """Write a read edit buffer (``read_region(t, "PATCH")``) back, so the amp
+    plays what it played before. A failure is logged, not raised: this runs
+    after the write it protects, which may itself have failed.
+
+    Args:
+        t: the connected transport.
+        keep: the edit buffer as it was read.
+    """
+    edit = load_map()["PATCH"]
+    try:
+        for bname in PATCH_BLOCKS:
+            data = keep.block(f"PATCH%{bname}")
+            if data:
+                _dt1_chunked(t, edit.block(bname).base_addr, data)
+    except Exception:                                # noqa: BLE001
+        log.warning("could not put the edit buffer back", exc_info=True)
+
+
+def write_system(t: Transport, ps: ParamSet) -> None:
+    """Write the SYSTEM region (the amp's global settings) from a ParamSet.
+
+    Args:
+        t: the connected transport.
+        ps: the SYSTEM region as read by ``read_region(t, "SYSTEM")``.
+    """
+    region = load_map()["SYSTEM"]
+    for b in region.blocks:
+        data = ps.block(ParamSet.block_key(region.name, b.name))
+        if data:
+            _dt1_chunked(t, b.base_addr, data)
 
 
 def clear_patch(t: Transport, patch_number: int) -> None:

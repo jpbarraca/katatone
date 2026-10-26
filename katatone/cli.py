@@ -6,11 +6,14 @@ Usage examples:
   python -m katatone read --in IN --out OUT [--patch N] [--region SYSTEM] [--out-file x.tsl]
   python -m katatone write --in IN --out OUT --patch N --tsl file.tsl [--name NAME]
   python -m katatone clear --in IN --out OUT --patch N
+  python -m katatone backup --in IN --out OUT FILE.ktbackup
+  python -m katatone restore --in IN --out OUT FILE.ktbackup [--yes]
   python -m katatone library list|save|import|remove
   python -m katatone wifi status|set|ensure|retry    (needs NetworkManager)
   python -m katatone passwd                     (the web GUI password)
 
 Options:
+  --version       Show the version and exit
   -v, --verbose   Enable debug logging to terminal
   --reduce-writes The file system is read-only: remount it rw only while writing
 """
@@ -23,7 +26,9 @@ import os
 import sys
 import time
 
-from . import rofs
+from . import __version__, rofs
+from .amp.backup import (Backup, BackupError, read_backup, save_before_restore,
+                         write_backup)
 from .amp.connect import HandshakeError, disconnect, handshake
 from .amp.read import read_patch, read_region
 from .amp.write import clear_patch, select_patch, write_patch
@@ -179,9 +184,11 @@ def _run(argv: list[str] | None = None) -> int:
                "  katatone ports\n"
                "  katatone read --in KATANA3 --out KATANA3 --patch 0 --out-file tone.tsl\n"
                "  katatone write --in KATANA3 --out KATANA3 --patch 1 --tsl tone.tsl\n"
+               "  katatone backup --in KATANA3 --out KATANA3 amp.ktbackup\n"
                "  katatone library list\n"
                "  katatone wifi set --ssid home --key 'my wifi key'\n"
                "\n'katatone COMMAND --help' lists the options of a command.")
+    ap.add_argument("--version", action="version", version=f"katatone {__version__}")
     # Debug logging is OFF by default; pass -v/--verbose to trace execution.
     ap.add_argument("-v", "--verbose", action="store_true", dest="verbose",
                     help="enable debug logging to terminal")
@@ -226,6 +233,15 @@ def _run(argv: list[str] | None = None) -> int:
     p = sub.add_parser("select", help="switch the amp to a user patch")
     need_midi(p)
     p.add_argument("--patch", type=int, required=True, help="amp slot to select, 0-9")
+
+    p = sub.add_parser("backup", help="save the ten user patches and the system settings of the amp to a file")
+    need_midi(p)
+    p.add_argument("file", help="file to write (.ktbackup)")
+
+    p = sub.add_parser("restore", help="write a backup file back to the amp (overwrites all ten patches and the system settings)")
+    need_midi(p)
+    p.add_argument("file", help="backup file made by 'katatone backup'")
+    p.add_argument("--yes", action="store_true", help="do not ask for confirmation")
 
     p = sub.add_parser("library", help="the local library of livesets (.tsl files)")
     p.add_argument("action", choices=["list", "save", "import", "remove"],
@@ -272,7 +288,21 @@ def _run(argv: list[str] | None = None) -> int:
         print(json.dumps(list_alsa_ports(), indent=1))
         return 0
 
-    if args.cmd in ("connect", "read", "write", "clear", "select"):
+    backup = None
+    if args.cmd == "restore":
+        try:
+            backup = Backup.load(args.file)
+        except (OSError, BackupError) as e:
+            print(f"restore: {args.file}: {e}", file=sys.stderr)
+            return 2
+        names = ", ".join(f"{i + 1}: {n or '-'}" for i, n in enumerate(backup.names()))
+        print(f"Backup of {backup.created or 'unknown date'}: {names}")
+        if not args.yes and input("Overwrite all ten patches and the system settings "
+                                  "of the amp? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("restore cancelled")
+            return 1
+
+    if args.cmd in ("connect", "read", "write", "clear", "select", "backup", "restore"):
         t = _connect(args)
         try:
             if args.cmd == "connect":
@@ -309,6 +339,16 @@ def _run(argv: list[str] | None = None) -> int:
                     return 2
                 write_patch(t, args.patch, tsl.to_paramset(args.patch), args.name)
                 print(f"wrote patch {args.patch + 1}")
+            elif args.cmd == "backup":
+                read_backup(t, progress=lambda i, n, text: print(f"  {text}")).save(args.file)
+                print(f"saved {args.file}")
+            elif args.cmd == "restore":
+                print("Saving what the amp holds now…")
+                kept = save_before_restore(
+                    read_backup(t, progress=lambda i, n, text: print(f"  {text}")))
+                print(f"  kept in {kept}")
+                write_backup(t, backup, progress=lambda i, n, text: print(f"  {text}"))
+                print("restored")
             elif args.cmd == "clear":
                 log.debug("clearing patch %d…", args.patch)
                 clear_patch(t, args.patch)

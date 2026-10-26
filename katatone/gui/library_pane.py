@@ -20,10 +20,11 @@ import datetime
 
 import flet as ft
 
+from ..amp.backup import EXTENSION, Backup, BackupError
 from ..liveset.tsl import MAX_PATCHES, LivesetFull, Tsl
 from ..model.paramset import ParamSet
 from ..remote.webview import DEFAULT_URL, stored_refresh_token
-from . import files, params_view as pv, theme
+from . import dialogs, files, params_view as pv, theme
 
 if TYPE_CHECKING:
     from .app import App
@@ -108,6 +109,10 @@ class _LibraryPane:
                       lambda e: self._create(), primary=True),
             pv.button("Import .tsl…", ft.Icons.UPLOAD_FILE, self._import),
             pv.button("Refresh", ft.Icons.REFRESH, lambda e: self.refresh()),
+            ft.Container(width=1, height=28, bgcolor=theme.PANEL_EDGE),
+            pv.button("Back up amp…", ft.Icons.SAVE_ALT,
+                      lambda e: self.app.backup_amp(self._offer_backup)),
+            pv.button("Restore amp…", ft.Icons.RESTORE, self._restore),
             ft.Container(width=1, height=28, bgcolor=theme.PANEL_EDGE),
             pv.button("Tone Central", ft.Icons.CLOUD_DOWNLOAD,
                       lambda e: self._tone_confirm()),
@@ -626,6 +631,58 @@ class _LibraryPane:
             return
         self.app.set_status("Export cancelled." if where is None
                             else f"Exported -> {where}")
+
+    # ------------------------------------------------------ amp backup
+
+    async def _offer_backup(self, backup: Backup) -> None:
+        """Offer a backup just read from the amp as a file: a "Save as" dialog
+        on the desktop, a download in a browser.
+
+        Args:
+            backup: what was read from the amp.
+        """
+        ft.context.disable_auto_update()
+        name = f"katatone-{datetime.datetime.now():%Y%m%d-%H%M}.{EXTENSION}"
+        try:
+            where = await files.save_bytes(
+                self.app.page, self._picker, "Save the amp backup", name,
+                EXTENSION, backup.to_json().encode())
+        except OSError as ex:
+            self.app.set_status(f"Backup failed: {ex}")
+            return
+        except Exception as ex:                       # noqa: BLE001
+            self.app.set_status(f"File chooser unavailable: {ex}")
+            return
+        self.app.set_status("Backup cancelled." if where is None
+                            else f"Backed up the amp -> {where}")
+
+    async def _restore(self, e) -> None:
+        """Pick a backup file and, after a confirmation that says what will be
+        overwritten, write it to the amp."""
+        ft.context.disable_auto_update()
+        if not self.app._require_connected():
+            return
+        try:
+            paths = await files.pick_files(self.app.page, self._picker,
+                                           "Restore the amp", EXTENSION)
+        except Exception as ex:                       # noqa: BLE001
+            self.app.set_status(f"File chooser unavailable: {ex}")
+            return
+        if not paths:
+            self.app.set_status("Restore cancelled.")
+            return
+        try:
+            backup = Backup.load(paths[0])
+        except (OSError, BackupError) as ex:
+            self.app.set_status(f"Cannot restore {paths[0].name}: {ex}")
+            return
+        names = "\n".join(f"{i + 1}: {n or '(empty)'}" for i, n in enumerate(backup.names()))
+        dialogs.confirm(
+            self.app.page,
+            f"Overwrite all ten patches and the system settings of the amp with this "
+            f"backup ({backup.created or 'unknown date'})?\n\n{names}\n\n"
+            "A copy of what the amp holds now is kept first.",
+            lambda: self.app.restore_amp(backup), label="Restore", icon=ft.Icons.RESTORE)
 
     # ----------------------------------------------------------- dialogs
 

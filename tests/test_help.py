@@ -119,3 +119,12 @@ def test_wifi_settings_belong_to_katatone_web(monkeypatch) -> None:
     monkeypatch.setattr(Wifi, "available", staticmethod(lambda: False))
     with pytest.raises(SystemExit, match="NetworkManager"):
         gui_app.main_web(["--wifi"])
+
+
+def test_every_command_reports_the_version(capsys) -> None:
+    from katatone import __version__
+    for fn, prog in ((cli.main, "katatone"),
+                     (gui_app._parse_args, "katatone-gui"),
+                     (lambda a: gui_app._parse_args(a, web=True), "katatone-web")):
+        out = run_help(fn, ["--version"], capsys)
+        assert out.strip() == f"{prog} {__version__}"

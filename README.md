@@ -1,5 +1,7 @@
 # KataTone
 
+[![Tests](https://github.com/jpbarraca/katatone/actions/workflows/tests.yml/badge.svg)](https://github.com/jpbarraca/katatone/actions/workflows/tests.yml)
+
 A Linux patch editor for the **BOSS Katana 50 Gen 3** amplifier.
 
 Edit every parameter of a patch, keep a local library of patches, download
@@ -17,7 +19,10 @@ window or as a browser interface, for example on a Raspberry Pi next to the amp.
 ## Features
 
 - **Patch editor** — all parameters of a patch, with live edits sent to the amp
+  and undo / redo (Ctrl+Z, Ctrl+Shift+Z)
 - **Library** — save patches into livesets (`.tsl` files) and write them back to the amp
+- **Backup** — save the amp's ten patches and system settings to one file, and
+  restore them ([details](docs/backup.md))
 - **Tone Central** — browse and download patches from the official BOSS site
   ([details](docs/tone-central.md))
 - **Analyzer** — level meter and spectrum of the amp's USB audio, with a
