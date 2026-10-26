@@ -41,7 +41,7 @@ window or as a browser interface, for example on a Raspberry Pi next to the amp.
 - **Browser interface** — the same app in a browser, with a login
   ([details](docs/web.md))
 - **Raspberry Pi** — headless use, Wi-Fi with an access-point fallback, read-only
-  file system ([details](docs/raspberry-pi.md))
+  file system ([details](docs/raspberry-pi.md)) **Alfa state**
 
 ## Install
 
