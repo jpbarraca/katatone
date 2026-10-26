@@ -26,3 +26,6 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local, never committed: scratch scripts, private files, the feature backlog
+/local/
