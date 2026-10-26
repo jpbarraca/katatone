@@ -43,22 +43,39 @@ missing Bluetooth package.
 
 ## Build it yourself
 
+You need `flatpak` and `flatpak-builder`.  From the top of the repository:
+
 ```bash
-flatpak install --user flathub org.gnome.Sdk//50
+make flatpak-deps      # once: the GNOME runtime and SDK the manifest asks for
+make flatpak           # build/flatpak/katatone-<version>-x86_64.flatpak and its .sha256
+make flatpak-install   # build and install it for this user
+make flatpak-run       # start the installed one
+make clean-flatpak     # remove build/flatpak
+```
+
+`make` alone lists them.  The version comes from `pyproject.toml` and the runtime from the
+manifest, and a build stops if the version is not the same in `pyproject.toml` and the
+metainfo (`packaging/check_version.py`).  Everything is built under `build/flatpak`; its
+`state/` folder keeps the downloaded sources, which is what makes a second build quick.
+`STATE=...` puts that cache elsewhere, but it must be on the same file system as `build/`
+(`flatpak-builder` links files between them), and `OUT=...` moves the whole build folder.
+
+What the targets run, if you want the commands:
+
+```bash
 cd packaging/flatpak
 flatpak-builder --user --install --force-clean --disable-rofiles-fuse \
     --state-dir=/tmp/katatone-fp /tmp/katatone-fp-build io.github.jpbarraca.katatone.yml
 ```
 
-To make the file of a release by hand (after building as above, with
-`--repo=/tmp/katatone-repo` added to the `flatpak-builder` command):
+adding `--repo=/tmp/katatone-repo` and then
 
 ```bash
-flatpak build-bundle /tmp/katatone-repo katatone-0.4.1-x86_64.flatpak io.github.jpbarraca.katatone master
+flatpak build-bundle /tmp/katatone-repo katatone-0.5.0-x86_64.flatpak io.github.jpbarraca.katatone master
 ```
 
-A release does not need this: pushing a version tag builds and attaches the file, see
-[Releasing](development.md#releasing).
+makes the file.  A release does not need any of this: pushing a version tag builds and
+attaches the file, see [Releasing](development.md#releasing).
 
 Two parts are pinned and have to be refreshed by hand when they change:
 

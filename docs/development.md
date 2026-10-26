@@ -75,6 +75,8 @@ commits since the previous tag; if you made the release first (to write its note
 hand) the files are added to it.  A failed check or build publishes nothing: fix it, then
 delete the tag (`git push origin :refs/tags/vX.Y.Z`) and tag again.
 
+To build the Flatpak on your own machine, `make flatpak` (see [Flatpak](flatpak.md#build-it-yourself)).
+
 **Run workflow** on the Actions page builds all the files without publishing them (they
 are kept as artifacts for a few days), which is the way to try a change to the workflow.
 The Flatpak build needs the GNOME runtime named in the manifest; when you move the
