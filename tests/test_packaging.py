@@ -1,8 +1,12 @@
 """Every data file of the package is declared, so an installed copy is the same program as the checkout."""
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ImportError:                 # Python 3.10
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 

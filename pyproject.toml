@@ -13,7 +13,7 @@ desktop = ["katatone[gui]", "flet-desktop>=1.0"]
 web = ["katatone[gui]", "flet-web>=1.0"]
 # The amp over Bluetooth (BlueZ through D-Bus).
 bluetooth = ["dbus-fast>=2.0"]
-dev = ["pytest>=8", "platformdirs"]
+dev = ["pytest>=8", "platformdirs", "tomli>=2; python_version < '3.11'"]
 
 [project.scripts]
 katatone = "katatone.cli:main"

@@ -45,7 +45,10 @@ def test_katatone_web_means_the_browser_interface() -> None:
 
 
 def test_the_entry_points_are_katatone_katatone_gui_and_katatone_web() -> None:
-    import tomllib
+    try:
+        import tomllib
+    except ImportError:             # Python 3.10
+        import tomli as tomllib
     from pathlib import Path
     scripts = tomllib.loads((Path(__file__).parent.parent / "pyproject.toml").read_text())["project"]["scripts"]
     assert scripts == {"katatone": "katatone.cli:main", "katatone-gui": "katatone.gui.app:main",
