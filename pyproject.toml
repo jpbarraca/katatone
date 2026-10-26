@@ -1,6 +1,6 @@
 [project]
 name = "katatone"
-version = "0.4.1"
+version = "0.5.0"
 description = "Linux patch editor for the Katana 50 Gen 3 amplifier (RC6 MIDI)"
 requires-python = ">=3.10"
 dependencies = []

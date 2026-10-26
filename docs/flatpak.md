@@ -11,7 +11,7 @@ You need Flatpak and the GNOME 50 runtime (Flatpak fetches it when it is missing
 
 ```bash
 flatpak install --user flathub org.gnome.Platform//50
-flatpak install --user katatone-0.4.1-x86_64.flatpak     # the file from the release page
+flatpak install --user katatone-0.5.0-x86_64.flatpak     # the file from the release page
 flatpak run io.github.jpbarraca.katatone
 ```
 

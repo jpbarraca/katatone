@@ -21,6 +21,15 @@
     <category>Music</category>
   </categories>
   <releases>
+    <release version="0.5.0" date="2026-10-26">
+      <description>
+        <p>Undo and redo in the patch editor, and backup and restore of the whole amp.</p>
+        <p>Compare a patch with the editor or the amp, search the library with tags and favourites, and play a liveset as a setlist from big buttons or a footswitch.</p>
+        <p>MIDI: ready-made profiles, and the last message shown with a shortcut to map it.</p>
+        <p>Tuner: more tunings (the bass strings were not heard before), a fine needle and a strobe. Analyzer: apply the proposed EQ to the editor.</p>
+        <p>The version is shown in the window and by --version.</p>
+      </description>
+    </release>
     <release version="0.4.1" date="2026-10-19">
       <description>
         <p>Available as a Flatpak (the desktop GUI, with the amp over USB).</p>
