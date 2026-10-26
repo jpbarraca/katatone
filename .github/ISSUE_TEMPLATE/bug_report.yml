@@ -1,0 +1,48 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: amp
+    attributes:
+      label: Amp model and firmware version
+      description: KataTone is developed and tested with a Katana 50 Gen 3 only, so reports from other models are especially useful.
+      placeholder: Katana 50 Gen 3, firmware 1.2.3
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: KataTone version
+      placeholder: "0.4.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install KataTone?
+      options:
+        - pipx
+        - Flatpak
+        - From source
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Linux distribution and Python version
+      placeholder: Fedora 44, Python 3.13
+  - type: textarea
+    id: log
+    attributes:
+      label: Log output
+      description: Run `katatone-gui -v` (or `katatone-web -v`) for debug logging and paste the output here.
+      render: shell
