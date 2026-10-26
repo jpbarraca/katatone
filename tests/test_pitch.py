@@ -68,6 +68,29 @@ def test_note_maths() -> None:
     assert pitch.cents_between(220, 440) == pytest.approx(-1200)
 
 
+@pytest.mark.parametrize("tuning", list(pitch.TUNINGS))
+def test_every_string_of_every_tuning_is_heard_and_read_in_tune(tuning) -> None:
+    """Regression: the lowest bass strings were below the detector's range."""
+    for note in pitch.TUNINGS[tuning]:
+        f = pitch.midi_to_freq(pitch.note_to_midi(note))
+        found = pitch.detect_pitch(tone(f), RATE)
+        assert found is not None, note
+        r = pitch.measure(found[0], pitch.TUNINGS[tuning])
+        assert r.note == note and abs(r.cents) < 1.0 and r.in_tune, (tuning, note)
+
+
+def test_the_alternate_tunings_are_the_usual_ones() -> None:
+    notes = {name: " ".join(n[:-1] for n in strings) for name, strings in pitch.TUNINGS.items()}
+    assert notes["Drop C"] == "C G C F A D"
+    assert notes["Double drop D"] == "D A D G B D"
+    assert notes["Open D"] == "D A D F# A D"
+    assert notes["Open E"] == "E B E G# B E"
+    assert notes["Open A"] == "E A E A C# E"
+    assert notes["7-string (B E A D G B E)"] == "B E A D G B E"
+    assert notes["Bass drop D"] == "D A D G"
+    assert notes["5-string bass (B E A D G)"] == "B E A D G"
+
+
 def test_every_tuning_has_valid_notes_in_ascending_order() -> None:
     for name, strings in pitch.TUNINGS.items():
         midis = [pitch.note_to_midi(n) for n in strings]

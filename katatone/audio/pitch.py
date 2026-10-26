@@ -11,7 +11,7 @@ from .bands import _NOTES
 
 #: Lowest and highest fundamental looked for (Hz): a 5-string bass B to the
 #: top of a guitar's range.
-F_LOW, F_HIGH = 55.0, 1400.0
+F_LOW, F_HIGH = 30.0, 1400.0
 #: Quietest input (dBFS RMS) that is listened to; below it there is no reading.
 MIN_RMS_DB = -55.0
 #: How clear (0..1) a periodic peak must be to count as a note.
@@ -31,7 +31,15 @@ TUNINGS = {
     "Full step down": ("D2", "G2", "C3", "F3", "A3", "D4"),
     "DADGAD": ("D2", "A2", "D3", "G3", "A3", "D4"),
     "Open G": ("D2", "G2", "D3", "G3", "B3", "D4"),
+    "Drop C": ("C2", "G2", "C3", "F3", "A3", "D4"),
+    "Double drop D": ("D2", "A2", "D3", "G3", "B3", "D4"),
+    "Open D": ("D2", "A2", "D3", "F#3", "A3", "D4"),
+    "Open E": ("E2", "B2", "E3", "G#3", "B3", "E4"),
+    "Open A": ("E2", "A2", "E3", "A3", "C#4", "E4"),
+    "7-string (B E A D G B E)": ("B1", "E2", "A2", "D3", "G3", "B3", "E4"),
     "Bass (E A D G)": ("E1", "A1", "D2", "G2"),
+    "Bass drop D": ("D1", "A1", "D2", "G2"),
+    "5-string bass (B E A D G)": ("B0", "E1", "A1", "D2", "G2"),
 }
 CHROMATIC = "Chromatic"
 #: The fret whose note is an octave above the open string: where the intonation

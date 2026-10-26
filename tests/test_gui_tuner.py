@@ -334,3 +334,80 @@ def test_the_chromatic_mode_has_no_intonation_check(window) -> None:
     window.mode.value = "Drop D"
     window._set_mode()
     assert not window.intonation.disabled and window.tuner.frets == (0, 12)
+
+
+# ---- the fine needle and the strobe ----
+
+def test_the_fine_needle_spreads_ten_cents_over_the_scale() -> None:
+    fine = tn.DISPLAYS["fine"]
+    m = tn.MARGIN
+    assert tn.cents_x(-10, 400, fine["span"]) == m and tn.cents_x(10, 400, fine["span"]) == 400 - m
+    assert tn.cents_x(5, 400, fine["span"]) == pytest.approx(200 + (400 - 2 * m) / 4)
+    shapes = tn.meter_shapes(400, 100, 3, False, **fine)
+    labels = {s.value for s in shapes if isinstance(s, cv.Text)}
+    assert labels == {"-10", "-5", "0", "+5", "+10"}
+    ticks = [s for s in shapes if isinstance(s, cv.Line)]
+    assert len(ticks) == 1 + 21 + 1                     # baseline, a tick per cent, the needle
+    zone = next(s for s in shapes if isinstance(s, cv.Rect))
+    assert zone.width == pytest.approx((400 - 2 * tn.MARGIN) / 2)    # +-5 cents is half the scale
+
+
+def test_the_default_needle_is_unchanged_by_the_new_arguments() -> None:
+    assert tn.meter_shapes(400, 100, -20, True) == tn.meter_shapes(400, 100, -20, True, **tn.DISPLAYS["needle"])
+
+
+def test_strobe_drifts_right_when_sharp_left_when_flat_and_stands_still_in_tune() -> None:
+    assert tn.strobe_speed(10) > 0 > tn.strobe_speed(-10)
+    assert tn.strobe_speed(0) == 0 and tn.strobe_speed(None) == 0
+    assert tn.strobe_speed(1000) == tn.STROBE_MAX_SPEED and tn.strobe_speed(-1000) == -tn.STROBE_MAX_SPEED
+    assert tn.strobe_speed(2) == pytest.approx(2 * tn.STROBE_SPEED)
+
+
+def bars(shapes) -> list[tuple[float, float]]:
+    return [(round(s.x, 6), round(s.width, 6)) for s in shapes[1:-1]]
+
+
+def test_strobe_bars_stay_inside_the_scale_and_repeat_every_spacing() -> None:
+    a = tn.strobe_shapes(400, 100, 7.0, 5, False)
+    assert all(x >= tn.MARGIN and x + w <= 400 - tn.MARGIN + 1e-9 for x, w in bars(a))
+    assert bars(a) == bars(tn.strobe_shapes(400, 100, 7.0 + tn.STROBE_SPACING, 5, False))
+    assert bars(a) != bars(tn.strobe_shapes(400, 100, 17.0, 5, False))
+    moved = tn.strobe_shapes(400, 100, 17.0, 5, False)
+    assert bars(moved)[1][0] - bars(a)[1][0] == pytest.approx(10.0)       # a positive phase moves right
+
+
+def test_strobe_colour_says_in_tune_off_tune_or_silent() -> None:
+    colour = lambda cents, ok: tn.strobe_shapes(400, 100, 0, cents, ok)[1].paint.color
+    assert colour(0, True) == tn.IN_TUNE_COLOR and colour(20, False) == tn.OFF_COLOR
+    assert colour(None, False) == tn.theme.TICK
+
+
+def test_the_window_offers_the_three_displays_and_draws_each(window) -> None:
+    assert [o.key for o in window.display.options] == ["needle", "fine", "strobe"]
+    std = pitch.TUNINGS["Standard (E A D G B E)"]
+    for style in ("needle", "fine", "strobe"):
+        window.display.value = style
+        window._set_display()
+        window.apply(pitch.measure(108, std), None)
+        assert window.meter.shapes
+
+
+def test_the_strobe_in_the_window_drifts_with_the_error(window, monkeypatch) -> None:
+    std = pitch.TUNINGS["Standard (E A D G B E)"]
+    clock = [100.0]
+    monkeypatch.setattr(tn.time, "monotonic", lambda: clock[0])
+    window.display.value = "strobe"
+    window._phase_time = clock[0]
+    start = window._phase
+    for _ in range(10):                                   # a second of a flat string
+        clock[0] += 0.1
+        window.apply(pitch.measure(108, std), None)
+    assert window._phase < start                          # flat: left
+    flat_end = window._phase
+    for _ in range(10):                                   # a second of a string in tune
+        clock[0] += 0.1
+        window.apply(pitch.measure(110, std), None)
+    assert window._phase == flat_end                      # in tune: still
+    clock[0] += 5                                         # the loop stalled: no jump
+    window.apply(pitch.measure(113, std), None)
+    assert window._phase - flat_end <= tn.STROBE_MAX_SPEED * 0.2 + 1e-9

@@ -11,8 +11,16 @@ amp and shares nothing with the editor.
   channels, and which one carries what is easiest to find by trying each: for tuning
   you want the one with the guitar's own sound.
 - **Tuning:** *Standard* (E A D G B E), *Drop D*, *Half step down*, *Full step
-  down*, *DADGAD*, *Open G*, *Bass* (E A D G) or *Chromatic* (the nearest note, any
-  instrument).
+  down*, *Drop C*, *Double drop D*, *DADGAD*, the open tunings *Open D*, *Open E*,
+  *Open G* and *Open A*, a *7-string* (B E A D G B E), the basses *Bass* (E A D G),
+  *Bass drop D* and *5-string bass* (B E A D G), or *Chromatic* (the nearest note, any
+  instrument).  The tuner hears fundamentals down to 30 Hz, the low B of a 5-string bass.
+- **Display:** how the error is shown.  *Needle* is the −50…+50 cent scale described
+  below; *Fine needle* spreads ±10 cents over the same width, with a tick per cent, for
+  the last few cents; *Strobe* is a field of bars that drift to the right when the
+  string is sharp and to the left when it is flat, faster the further off it is, and
+  hold still when it is exactly in tune (it drifts slowly within the green band, so
+  tune until it stops).
 - **Reference:** the pitch of A4, 415–450 Hz (440 by default).
 - **Check intonation (12th fret):** a checkbox for setting the saddles.  The tuner then
   recognises both the open string and the same string at the 12th fret (the chips show
@@ -30,7 +38,7 @@ amp and shares nothing with the editor.
   Where two strings are an octave apart (the low D and the D string in Drop D, DADGAD or
   Open G) the sound could be either, and is taken as the open string: click the string's
   chip first.  Not available for *Chromatic*.
-- **Display:** the note it hears, how many cents it is above or below that note,
+- **Reading:** the note it hears, how many cents it is above or below that note,
   and a needle on a −50…+50 cent scale (the green band is ±5 cents).  The note and
   the needle turn green when the string is in tune, and the hint says whether to tune
   up or down.  The reading is held for a moment after the string fades.

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+import time
 import traceback
 
 import flet as ft
@@ -32,18 +33,33 @@ RANGE_CENTS = 50.0
 #: Space kept free at both ends so the end labels are not cut off.
 MARGIN = 24.0
 TICKS = tuple(range(-50, 51, 5))
+#: The needle displays: the scale's span either side of the centre in cents, the ticks
+#: and the spacing of the labelled ones.
+DISPLAYS = {
+    "needle": dict(span=RANGE_CENTS, ticks=TICKS, major=25),
+    "fine": dict(span=10.0, ticks=tuple(range(-10, 11)), major=5),
+}
+DISPLAY_LABELS = {"needle": "Needle (±50 cents)", "fine": "Fine needle (±10 cents)",
+                  "strobe": "Strobe"}
+#: Strobe: the bars' spacing and width (px), how fast they drift per cent of error
+#: (px/s) and the fastest drift.  In tune they stand still.
+STROBE_SPACING = 40.0
+STROBE_BAR = 20.0
+STROBE_SPEED = 8.0
+STROBE_MAX_SPEED = 360.0
 IN_TUNE_COLOR = theme.OK
 OFF_COLOR = theme.ACCENT
 
 
-def cents_x(cents: float, width: float) -> float:
+def cents_x(cents: float, width: float, span: float = RANGE_CENTS) -> float:
     """Horizontal position of an error in cents on the meter (0 in the middle,
-    clamped to the ends)."""
-    c = max(-RANGE_CENTS, min(RANGE_CENTS, cents))
-    return MARGIN + (width - 2 * MARGIN) * (0.5 + c / (2 * RANGE_CENTS))
+    clamped to the ends of a scale ``span`` cents either side of it)."""
+    c = max(-span, min(span, cents))
+    return MARGIN + (width - 2 * MARGIN) * (0.5 + c / (2 * span))
 
 
-def meter_shapes(width: float, height: float, cents: float | None, in_tune: bool) -> list:
+def meter_shapes(width: float, height: float, cents: float | None, in_tune: bool,
+                 span: float = RANGE_CENTS, ticks=TICKS, major: int = 25) -> list:
     """The tuning meter: a scale in cents, the in-tune zone and the needle.
 
     Args:
@@ -51,18 +67,22 @@ def meter_shapes(width: float, height: float, cents: float | None, in_tune: bool
         height: canvas height.
         cents: the error to show, or None for no needle.
         in_tune: colour the needle as in tune.
+        span: the scale runs this many cents either side of the centre.
+        ticks: where the scale has ticks, in cents.
+        major: every tick that is a multiple of this is long and labelled.
     Returns:
         Canvas shapes.
     """
     top, base = height * 0.30, height * 0.80
     shapes: list = []
     zone = pitch.IN_TUNE_CENTS
-    shapes.append(cv.Rect(cents_x(-zone, width), top, cents_x(zone, width) - cents_x(-zone, width),
+    shapes.append(cv.Rect(cents_x(-zone, width, span), top,
+                          cents_x(zone, width, span) - cents_x(-zone, width, span),
                           base - top, paint=ft.Paint(color="#334f9d69", style=ft.PaintingStyle.FILL)))
     shapes.append(cv.Line(MARGIN, base, width - MARGIN, base, paint=ft.Paint(color=theme.PANEL_EDGE, stroke_width=1)))
-    for t in TICKS:
-        x = cents_x(t, width)
-        long = t % 25 == 0
+    for t in ticks:
+        x = cents_x(t, width, span)
+        long = t % major == 0
         shapes.append(cv.Line(x, base, x, base - (height * 0.28 if long else height * 0.14),
                               paint=ft.Paint(color=theme.TICK, stroke_width=1)))
         if long:
@@ -70,10 +90,50 @@ def meter_shapes(width: float, height: float, cents: float | None, in_tune: bool
                                   alignment=ft.Alignment.TOP_CENTER,
                                   style=ft.TextStyle(size=10, color=theme.MUTED)))
     if cents is not None:
-        x = cents_x(cents, width)
+        x = cents_x(cents, width, span)
         color = IN_TUNE_COLOR if in_tune else OFF_COLOR
         shapes.append(cv.Line(x, top - 6, x, base, paint=ft.Paint(color=color, stroke_width=3)))
         shapes.append(cv.Circle(x, top - 6, 6, paint=ft.Paint(color=color, style=ft.PaintingStyle.FILL)))
+    return shapes
+
+
+def strobe_speed(cents: float | None) -> float:
+    """How fast the strobe's bars drift, in px/s: to the right when sharp, to the
+    left when flat, none when nothing is heard."""
+    if cents is None:
+        return 0.0
+    return max(-STROBE_MAX_SPEED, min(STROBE_MAX_SPEED, cents * STROBE_SPEED))
+
+
+def strobe_shapes(width: float, height: float, phase: float, cents: float | None,
+                  in_tune: bool) -> list:
+    """The strobe display: bars that stand still when the string is in tune and
+    drift right when it is sharp, left when flat (faster the further off).
+
+    Args:
+        width: canvas width.
+        height: canvas height.
+        phase: how far the bars have drifted, in px (see :func:`strobe_speed`).
+        cents: the error, or None when nothing is heard (the bars are grey).
+        in_tune: colour the bars as in tune.
+    Returns:
+        Canvas shapes.
+    """
+    top, base = height * 0.15, height * 0.85
+    color = theme.TICK if cents is None else (IN_TUNE_COLOR if in_tune else OFF_COLOR)
+    left, right = MARGIN, width - MARGIN
+    shapes: list = [cv.Rect(left, top, right - left, base - top,
+                            paint=ft.Paint(color=theme.PANEL_EDGE, style=ft.PaintingStyle.STROKE,
+                                           stroke_width=1))]
+    x = left - STROBE_SPACING + phase % STROBE_SPACING
+    while x < right:
+        x1, x2 = max(x, left), min(x + STROBE_BAR, right)
+        if x2 > x1:
+            shapes.append(cv.Rect(x1, top + 2, x2 - x1, base - top - 4,
+                                  paint=ft.Paint(color=color, style=ft.PaintingStyle.FILL)))
+        x += STROBE_SPACING
+    mid = width / 2
+    shapes.append(cv.Line(mid, top - 8, mid, top - 1, paint=ft.Paint(color=theme.MUTED, stroke_width=2)))
     return shapes
 
 
@@ -148,6 +208,8 @@ class TunerWindow:
         self._running = True
         self._warned = False
         self._meter_size = (560.0, 110.0)
+        self._phase = 0.0                      # the strobe's drift (px)
+        self._phase_time = time.monotonic()
         self._chips: list[ft.Container] = []
 
         devices = list_input_devices()
@@ -173,6 +235,10 @@ class TunerWindow:
                      "it should be exactly one octave higher. Both are recognised. Sharp: move "
                      "the saddle back (longer string); flat: move it forward (shorter)"),
             on_change=lambda e: self._set_intonation())
+        self.display = ft.Dropdown(
+            label="Display", width=210, value="needle",
+            options=[ft.DropdownOption(key=k, text=t) for k, t in DISPLAY_LABELS.items()],
+            on_select=lambda e: self._set_display(), **pv.FIELD_STYLE)
         self.reference = ft.Dropdown(
             label="Reference", width=170, value="440",
             options=[ft.DropdownOption(key=str(r), text=f"A4 = {r} Hz") for r in pitch.REFERENCES],
@@ -201,7 +267,8 @@ class TunerWindow:
                                 vertical_alignment=ft.CrossAxisAlignment.CENTER),
                          padding=ft.Padding(left=0, right=0, top=8, bottom=0)),
             ft.Row([self.mode, self.reference], spacing=8),
-            self.intonation,
+            ft.Row([self.intonation, self.display], spacing=8, wrap=True,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Container(ft.Column([
                 ft.Row([self.note], alignment=ft.MainAxisAlignment.CENTER),
                 ft.Row([self.hint_icon, self.hint], alignment=ft.MainAxisAlignment.CENTER,
@@ -361,10 +428,22 @@ class TunerWindow:
         """Canvas resize: remember the size."""
         self._meter_size = (float(e.width), float(e.height))
 
+    def _set_display(self) -> None:
+        """Display dropdown: redraw in the chosen style."""
+        self._draw_meter(None, False)
+
     def _draw_meter(self, cents: float | None, in_tune: bool) -> None:
-        """Redraw the needle."""
+        """Redraw the needle, or the strobe."""
         w, h = self._meter_size
-        self.meter.shapes = meter_shapes(w, h, cents, in_tune)
+        style = self.display.value
+        if style == "strobe":
+            now = time.monotonic()
+            dt = min(now - self._phase_time, 0.2)     # a stalled loop must not jump
+            self._phase_time = now
+            self._phase += strobe_speed(cents) * dt
+            self.meter.shapes = strobe_shapes(w, h, self._phase, cents, in_tune)
+        else:
+            self.meter.shapes = meter_shapes(w, h, cents, in_tune, **DISPLAYS[style])
         self._update(self.meter)
 
     async def _loop(self) -> None:
