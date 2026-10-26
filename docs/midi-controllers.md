@@ -10,6 +10,8 @@ Any class-compliant **USB MIDI** controller can control the amp from the
    footswitch (or move the pedal). The message is captured; pick what it does:
    - **Select a channel** (Panel, A1 … B2), **channel from program number**,
      **switch bank**, **next / previous channel**;
+   - **Next / previous setlist patch**: plays the next or previous patch of the
+     open [setlist](setlist.md) through the amp's edit buffer (no slot is written);
    - **Effect on / off** (booster, mod, FX, delay, delay 2, reverb,
      send/return, solo, noise suppressor, pedal FX), toggled, forced on or off,
      or on while held;

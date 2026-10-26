@@ -182,3 +182,20 @@ def test_write_patch_keep_sound_puts_the_edit_buffer_back(monkeypatch) -> None:
     with pytest.raises(OSError):
         w.write_patch_keep_sound(object(), 3, ParamSet(), "Name")
     assert steps[0] == "read" and steps[-1][0] == "restore"        # restored anyway
+
+
+def test_write_edit_buffer_plays_a_patch_without_storing_it(transport, amp: FakeAmp, region) -> None:
+    """The setlist's way to play a patch: the blocks go to the edit buffer, nothing to a slot."""
+    from katatone.amp.write import write_edit_buffer
+    edit = load_map()["PATCH"]
+    ps = ParamSet()
+    for name in PATCH_BLOCKS:
+        ps.set_block(f"PATCH%{name}", b"\x00" * region.block(name).length)
+    ps.set_block("PATCH%COM", ParamSet.encode_patch_name("Gig One").ljust(16))
+    ps.set_block("PATCH%AMP", bytes([5]) * region.block("AMP").length)
+    write_edit_buffer(transport, ps)
+    writes = dict(amp.writes)
+    assert ParamSet.patch_name(writes[rc6.to_nib(edit.block("COM").base_addr)]) == "Gig One"
+    assert writes[rc6.to_nib(edit.block("AMP").base_addr)][:1] == bytes([5])
+    for cmd in (CMD_PATCH_WRITE, CMD_EXPORT, CMD_PATCH_CLEAR):
+        assert rc6.to_nib(cmd) not in writes             # nothing is stored in a slot

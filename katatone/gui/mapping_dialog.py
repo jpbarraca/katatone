@@ -14,7 +14,7 @@ from ..midi import mapping as mp
 from ..midi.learn import LearnResult
 from ..midi.mapping import (AmpNative, BankAction, ChannelFromPc, ChannelSelect, ChannelStep,
                             EffectAction, ExprTarget, ExpressionAction, Mapping,
-                            Trigger)
+                            SetlistStep, Trigger)
 from ..midi.router import AMP_NATIVE_ENABLED
 from . import model, params_view as pv, theme
 
@@ -29,10 +29,12 @@ MODE_LABELS = {"press": "Press (once per press)", "toggle": "Toggle (on/off stat
 ACTION_LABELS = {"channel_select": "Select a channel",
                  "channel_from_pc": "Channel from program number",
                  "bank": "Switch bank", "channel_step": "Next / previous channel",
+                 "setlist_step": "Next / previous setlist patch",
                  "effect": "Effect on / off", "expression": "Expression (continuous)",
                  "amp_native": "Forward to the amp's own MIDI map"}
 BANK_OPS = {"toggle": "Toggle A/B", "next": "Next bank", "prev": "Previous bank"}
 STEP_OPS = {"next": "Next channel", "prev": "Previous channel"}
+SETLIST_OPS = {"next": "Next patch", "prev": "Previous patch"}
 EFFECT_OPS = {"toggle": "Toggle", "on": "Switch on", "off": "Switch off",
               "momentary": "On while held"}
 TARGET_LABELS = {"pedal_fx": "Pedal FX position (wah / bend)", "volume": "Amp volume",
@@ -288,7 +290,8 @@ class MappingDialog:
         self.draft.action = {
             "channel_select": self._new_channel_select,
             "channel_from_pc": ChannelFromPc, "bank": BankAction,
-            "channel_step": ChannelStep, "effect": EffectAction,
+            "channel_step": ChannelStep, "setlist_step": SetlistStep,
+            "effect": EffectAction,
             "expression": ExpressionAction, "amp_native": AmpNative,
         }[kind]()
         self._build_action()
@@ -307,6 +310,11 @@ class MappingDialog:
                                  lambda k: setattr(a, "op", k)))
         elif isinstance(a, ChannelStep):
             box.append(_dropdown("Step", STEP_OPS, a.op, lambda k: setattr(a, "op", k)))
+        elif isinstance(a, SetlistStep):
+            box.append(_dropdown("Step", SETLIST_OPS, a.op, lambda k: setattr(a, "op", k)))
+            box.append(ft.Text("Plays the patch through the amp's edit buffer; open the setlist "
+                               "on the SETLIST tab first. No slot is written.",
+                               size=11, color=theme.MUTED))
         elif isinstance(a, EffectAction):
             effects = {k: d.label for k, d in mp.EFFECTS.items()}
             box.append(ft.Row([

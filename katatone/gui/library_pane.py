@@ -21,10 +21,11 @@ import datetime
 import flet as ft
 
 from ..amp.backup import EXTENSION, Backup, BackupError
+from ..library.store import all_tags, filter_entries
 from ..liveset.tsl import MAX_PATCHES, LivesetFull, Tsl
 from ..model.paramset import ParamSet
 from ..remote.webview import DEFAULT_URL, stored_refresh_token
-from . import dialogs, files, params_view as pv, theme
+from . import compare_dialog, dialogs, files, params_view as pv, theme
 
 if TYPE_CHECKING:
     from .app import App
@@ -52,6 +53,8 @@ def refresh(app: App) -> None:
     if hasattr(app, "library"):
         app.library.refresh()
 
+
+ALL_TAGS = "All tags"       # the tag filter's "no filter"
 
 #: Terms of service of the site the Tone Central button opens.
 TERMS_URL = "https://bosstoneexchange.com/terms_and_conditions/"
@@ -99,6 +102,18 @@ class _LibraryPane:
         # so Flet does not drop it as unreferenced after the next event.
         self._picker = ft.FilePicker()
 
+        self.search_field = ft.TextField(
+            label="Search", width=200, value="", prefix_icon=ft.Icons.SEARCH,
+            hint_text="name, tag or patch", on_change=lambda e: self.refresh(),
+            **pv.FIELD_STYLE)
+        self.tag_filter = ft.Dropdown(label="Tag", width=140, value=ALL_TAGS,
+                                      options=[ft.dropdown.Option(ALL_TAGS)],
+                                      on_select=lambda e: self.refresh(),
+                                      **pv.FIELD_STYLE)
+        self.fav_filter = ft.IconButton(
+            ft.Icons.STAR_BORDER, selected_icon=ft.Icons.STAR, selected=False,
+            icon_color=theme.MUTED, selected_icon_color=theme.ACCENT,
+            tooltip="Only favourites", on_click=self._toggle_fav_filter)
         self.new_field = ft.TextField(label="New liveset name", width=220,
                                       value="", hint_text="My liveset",
                                       on_submit=lambda e: self._create(),
@@ -109,6 +124,8 @@ class _LibraryPane:
                       lambda e: self._create(), primary=True),
             pv.button("Import .tsl…", ft.Icons.UPLOAD_FILE, self._import),
             pv.button("Refresh", ft.Icons.REFRESH, lambda e: self.refresh()),
+            ft.Container(width=1, height=28, bgcolor=theme.PANEL_EDGE),
+            self.search_field, self.tag_filter, self.fav_filter,
             ft.Container(width=1, height=28, bgcolor=theme.PANEL_EDGE),
             pv.button("Back up amp…", ft.Icons.SAVE_ALT,
                       lambda e: self.app.backup_amp(self._offer_backup)),
@@ -240,11 +257,19 @@ class _LibraryPane:
         if self.selected not in names:
             self.selected = names[0] if names else None
         self._load_selected()
-        self.liveset_list.controls = (
-            [self._liveset_row(e) for e in entries] or
-            [ft.Text(f"No livesets yet in {self.app.lib.root}.\n"
-                     "Create one above or import a .tsl file.",
-                     color=theme.MUTED, size=12)])
+        tags = all_tags(entries)
+        if self.tag_filter.value not in (ALL_TAGS, *tags):
+            self.tag_filter.value = ALL_TAGS            # that tag is gone
+        self.tag_filter.options = [ft.dropdown.Option(t) for t in (ALL_TAGS, *tags)]
+        shown = filter_entries(
+            entries, self.search_field.value or "",
+            None if self.tag_filter.value == ALL_TAGS else self.tag_filter.value,
+            self.fav_filter.selected)
+        empty = (ft.Text("No livesets match.", color=theme.MUTED, size=12) if entries else
+                 ft.Text(f"No livesets yet in {self.app.lib.root}.\n"
+                         "Create one above or import a .tsl file.",
+                         color=theme.MUTED, size=12))
+        self.liveset_list.controls = [self._liveset_row(e) for e in shown] or [empty]
         self._render_patches()
         _safe_update(self.root)
 
@@ -282,10 +307,22 @@ class _LibraryPane:
                             weight=ft.FontWeight.BOLD if active else None,
                             no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
                     ft.Text(f"{count}  ·  {ts}", size=11, color=theme.MUTED),
+                    *([ft.Text("  ".join(f"#{t}" for t in e.tags), size=11,
+                               color=theme.ACCENT, no_wrap=True,
+                               overflow=ft.TextOverflow.ELLIPSIS)] if e.tags else []),
                 ], spacing=0, expand=True),
+                ft.IconButton(ft.Icons.STAR if e.favourite else ft.Icons.STAR_BORDER,
+                              icon_size=18,
+                              icon_color=theme.ACCENT if e.favourite else theme.MUTED,
+                              tooltip="Remove from favourites" if e.favourite
+                              else "Add to favourites",
+                              on_click=lambda ev, n=e.name, f=not e.favourite:
+                              self._set_favourite(n, f)),
                 _menu([
                     ("Rename…", ft.Icons.EDIT,
                      lambda ev, n=e.name: self._rename_liveset(n)),
+                    ("Tags…", ft.Icons.SELL,
+                     lambda ev, n=e.name, t=e.tags: self._edit_tags(n, t)),
                     ("Duplicate", ft.Icons.COPY_ALL,
                      lambda ev, n=e.name: self._duplicate_liveset(n)),
                     ("Export…", ft.Icons.SAVE_ALT, self._export_handler(e.name)),
@@ -351,6 +388,8 @@ class _LibraryPane:
         from_tc = isinstance(memo, dict) and memo.get("isToneCentralPatch")
         menu = [
             ("Rename…", ft.Icons.EDIT, lambda e, i=i: self._rename_patch(i)),
+            ("Compare with editor", ft.Icons.COMPARE_ARROWS,
+             lambda e, i=i: self._compare_patch(i)),
             ("Duplicate", ft.Icons.COPY_ALL,
              lambda e, i=i: self._mutate(lambda t: t.duplicate(i))),
             *[(f"Copy to “{o}”", ft.Icons.CONTENT_COPY,
@@ -415,6 +454,28 @@ class _LibraryPane:
         self.selected = tsl.name
         self.app.set_status(f"Created liveset {tsl.name!r}.")
         self.refresh()
+
+    def _toggle_fav_filter(self, e) -> None:
+        """Show only the favourites, or all livesets again."""
+        ft.context.disable_auto_update()
+        self.fav_filter.selected = not self.fav_filter.selected
+        self.refresh()
+
+    def _set_favourite(self, name: str, on: bool) -> None:
+        """Star or unstar a liveset."""
+        ft.context.disable_auto_update()
+        self.app.lib.set_favourite(name, on)
+        self.refresh()
+
+    def _edit_tags(self, name: str, tags: list[str]) -> None:
+        """Ask for the liveset's tags, comma separated."""
+        def done(text: str) -> None:
+            """Store the tags."""
+            stored = self.app.lib.set_tags(name, text)
+            self.app.set_status(f"Tags of {name!r}: {', '.join(stored) or 'none'}.")
+            self.refresh()
+        self._prompt(f"Tags of “{name}” (comma separated)", ", ".join(tags), done,
+                     max_length=120, allow_empty=True)
 
     def _duplicate_liveset(self, name: str) -> None:
         """Duplicate the liveset named ``name`` (the copy gets a new name),
@@ -532,6 +593,16 @@ class _LibraryPane:
                                 f"to {target!r}.")
             self.refresh()
         self.app.read_amp_patch(n, done)
+
+    def _compare_patch(self, i: int) -> None:
+        """Compare patch ``i`` of the selected liveset with the editor's."""
+        ft.context.disable_auto_update()
+        tsl = self.tsl
+        if not tsl.patches[i]:
+            self.app.set_status("That patch is empty.")
+            return
+        compare_dialog.show(self.app, tsl.to_paramset(i),
+                            f"{tsl.patch_name(i) or f'patch {i + 1}'} from {tsl.name}")
 
     def _load_patch(self, i: int) -> None:
         """Load patch ``i`` of the selected liveset into the editor."""
@@ -687,7 +758,7 @@ class _LibraryPane:
     # ----------------------------------------------------------- dialogs
 
     def _prompt(self, title: str, value: str, on_ok: Callable[[str], None],
-                max_length: int) -> None:
+                max_length: int, allow_empty: bool = False) -> None:
         """Show a single-line text dialog pre-filled with ``value``.
 
         Args:
@@ -696,6 +767,7 @@ class _LibraryPane:
             on_ok: called with the stripped field text when Save is
                 pressed; skipped when the field is left empty.
             max_length: maximum number of characters the field accepts.
+            allow_empty: call ``on_ok`` with ``""`` too, for a field that may be cleared.
         """
         ft.context.disable_auto_update()
         field = ft.TextField(value=value, autofocus=True, max_length=max_length,
@@ -705,8 +777,8 @@ class _LibraryPane:
             """Close the dialog and hand the stripped field text to
             ``on_ok``."""
             self.app.page.pop_dialog()
-            if (field.value or "").strip():
-                on_ok(field.value.strip())
+            if (field.value or "").strip() or allow_empty:
+                on_ok((field.value or "").strip())
 
         field.on_submit = ok
         self.app.page.show_dialog(ft.AlertDialog(

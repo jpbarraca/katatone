@@ -12,7 +12,8 @@ from katatone.midi import mapping as mp
 from katatone.midi.events import ControlChange, NoteOff, NoteOn, ProgramChange
 from katatone.midi.mapping import (BankAction, ChannelFromPc, ChannelSelect,
                                    ChannelStep, EffectAction, ExprTarget,
-                                   ExpressionAction, Mapping, Profile, Trigger)
+                                   ExpressionAction, Mapping, Profile, SetlistStep,
+                                   Trigger)
 from katatone.midi.parser import MidiParser
 from katatone.midi.router import Router
 from katatone.model.paramset import ParamSet
@@ -53,6 +54,7 @@ class FakeHost:
         self.applied: list[tuple[str, int, int, bool]] = []
         self.shown: list[tuple[str, int, int]] = []
         self.statuses: list[str] = []
+        self.setlist_steps: list[str] = []
 
     def get_transport(self):
         return self.transport
@@ -71,6 +73,9 @@ class FakeHost:
 
     def status(self, msg: str) -> None:
         self.statuses.append(msg)
+
+    def setlist_step(self, op: str) -> None:
+        self.setlist_steps.append(op)
 
 
 def trig(**kw) -> Trigger:
@@ -177,6 +182,34 @@ def test_pc_without_an_assigned_channel(host) -> None:
         assert host.statuses == ["PC 9: no channel assigned"]
     finally:
         r.stop()
+
+
+def test_setlist_step_asks_the_host_to_play_the_next_and_previous_patch(host) -> None:
+    r = make_router(host,
+                    mapping(trig(kind="note", number=60), SetlistStep("next")),
+                    mapping(trig(kind="note", number=62), SetlistStep("prev")))
+    try:
+        send(r, NoteOn(0, 60, 100), NoteOff(0, 60), NoteOn(0, 62, 100), NoteOn(0, 60, 100))
+        assert host.setlist_steps == ["next", "prev", "next"]
+        assert host.selects == [] and host.transport.writes == []     # the router writes nothing itself
+    finally:
+        r.stop()
+
+
+def test_setlist_step_needs_the_amp(host) -> None:
+    host.connected = False
+    r = make_router(host, mapping(trig(kind="note", number=60), SetlistStep("next")))
+    try:
+        send(r, NoteOn(0, 60, 100))
+        assert host.setlist_steps == [] and host.statuses == ["Amp not connected"]
+    finally:
+        r.stop()
+
+
+def test_setlist_step_survives_the_profile_file() -> None:
+    m = mapping(trig(kind="note", number=60), SetlistStep("prev"))
+    again = Mapping.from_dict(m.to_dict())
+    assert again.action == SetlistStep("prev") and again.action.summary() == "Setlist prev"
 
 
 def test_bank_toggle_and_step(host) -> None:

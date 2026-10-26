@@ -350,6 +350,28 @@ class ChannelStep:
 
 
 @dataclass
+class SetlistStep:
+    """Play the next/previous patch of the open setlist (through the amp's edit
+    buffer; no slot is written)."""
+
+    type: ClassVar[str] = "setlist_step"
+    op: str = "next"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise for the profile JSON."""
+        return {"type": self.type, "op": self.op}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "SetlistStep":
+        """Rebuild from `to_dict` output."""
+        return cls(op=d["op"])
+
+    def summary(self, slot_name=str) -> str:
+        """Text for the mappings table."""
+        return f"Setlist {self.op}"
+
+
+@dataclass
 class EffectAction:
     """Switch an effect on/off (see `EFFECTS`)."""
 
@@ -455,11 +477,11 @@ class UnknownAction:
         return f"Unsupported action ({self.raw.get('type', '?')})"
 
 
-Action = Union[ChannelSelect, ChannelFromPc, BankAction, ChannelStep,
+Action = Union[ChannelSelect, ChannelFromPc, BankAction, ChannelStep, SetlistStep,
                EffectAction, ExpressionAction, AmpNative, UnknownAction]
 
 ACTION_TYPES: dict[str, type] = {c.type: c for c in (
-    ChannelSelect, ChannelFromPc, BankAction, ChannelStep, EffectAction,
+    ChannelSelect, ChannelFromPc, BankAction, ChannelStep, SetlistStep, EffectAction,
     ExpressionAction, AmpNative)}
 
 

@@ -54,6 +54,33 @@ def _dt1_chunked(t: Transport, addr: int, data: bytes) -> None:
         off += len(chunk)
 
 
+def _send_blocks(t: Transport, ps: ParamSet, com: bytes) -> None:
+    """DT1 every block of a patch into the edit buffer, ``com`` as the COM block.
+
+    Each is sent chunked so any block longer than DT1_CHUNK (e.g. FX_DETAIL at
+    353 B) is fully written.
+    """
+    edit = load_map()["PATCH"]
+    for bname in PATCH_BLOCKS:
+        data = com if bname == "COM" else ps.block(f"PATCH%{bname}")
+        if data:
+            _dt1_chunked(t, edit.block(bname).base_addr, data)
+
+
+def write_edit_buffer(t: Transport, ps: ParamSet) -> None:
+    """Make the amp play a patch without storing it in any slot.
+
+    The patch goes into the edit buffer only, so the slots are untouched and the
+    sound is gone when the amp switches channel (a setlist uses this).
+
+    Args:
+        t: the connected transport.
+        ps: the ParamSet holding the patch's `PATCH%<BLOCK>` data.
+    """
+    edit = load_map()["PATCH"]
+    _send_blocks(t, ps, ps.block("PATCH%COM") or bytes(edit.block("COM").length))
+
+
 def write_patch(t: Transport, patch_number: int, ps: ParamSet,
                 name: str | None = None) -> None:
     """Store a ParamSet in user patch N.
@@ -88,12 +115,8 @@ def write_patch(t: Transport, patch_number: int, ps: ParamSet,
     encoded = ParamSet.encode_patch_name(stored)
     com[:len(encoded)] = encoded
 
-    # 1. every block, COM first, into the edit buffer.  Each is sent chunked so any
-    #    block longer than DT1_CHUNK (e.g. FX_DETAIL at 353 B) is fully written.
-    for bname in PATCH_BLOCKS:
-        data = bytes(com) if bname == "COM" else ps.block(f"PATCH%{bname}")
-        if data:
-            _dt1_chunked(t, edit.block(bname).base_addr, data)
+    # 1. every block, COM first, into the edit buffer
+    _send_blocks(t, ps, bytes(com))
 
     # 2. store it in the slot, 3. confirm
     t.dt1(CMD_PATCH_WRITE, rc6.int2x7(patch_number))

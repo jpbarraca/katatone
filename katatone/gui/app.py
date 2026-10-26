@@ -28,17 +28,20 @@ from ..library.store import Library
 from ..midi.manager import MidiManager
 from ..model.paramset import ParamSet
 from ..protocol import rc6
-from . import params_view as pv, theme
+from ..setlist import Setlist
+from . import compare_dialog, params_view as pv, theme
 from .history import EditHistory
 from .model import display_label
 from .headless import HeadlessPage
-from . import (library_pane, login, midi_pane, patch_editor, statusbar, system_pane)
+from . import (library_pane, login, midi_pane, patch_editor, setlist_pane, statusbar,
+               system_pane)
 
 TAB_PATCH = "PATCH"
 TAB_SYSTEM = "SYSTEM"
 TAB_MIDI = midi_pane.TAB_MIDI
 TAB_LIBRARY = "LIBRARY"
-TAB_ORDER = (TAB_PATCH, TAB_SYSTEM, TAB_MIDI, TAB_LIBRARY)
+TAB_SETLIST = setlist_pane.TAB_SETLIST
+TAB_ORDER = (TAB_PATCH, TAB_SYSTEM, TAB_MIDI, TAB_LIBRARY, TAB_SETLIST)
 
 log = logging.getLogger("katatone.gui")
 
@@ -126,6 +129,7 @@ class App:
         self.ps = ParamSet()            # working patch
         self.dirty = False
         self.history = EditHistory()    # undo / redo of the edits to `ps`
+        self.setlist: Setlist | None = None     # the liveset open on the SETLIST tab
         self._backup_offered = False    # asked about a backup before overwriting a slot
         self.system_ps: ParamSet | None = None
         self.lib = Library()
@@ -203,7 +207,7 @@ class App:
         top = statusbar.build(self)
         self.editor = patch_editor.PatchEditor(self)
         tabs = ft.Tabs(
-            length=4,
+            length=len(TAB_ORDER),
             expand=True,
             on_change=self._on_tab_change,
             content=ft.Column(
@@ -214,6 +218,7 @@ class App:
                         ft.Tab(label=TAB_SYSTEM, icon=ft.Icons.SETTINGS),
                         ft.Tab(label=TAB_MIDI, icon=ft.Icons.PIANO),
                         ft.Tab(label=TAB_LIBRARY, icon=ft.Icons.LIBRARY_MUSIC),
+                        ft.Tab(label=TAB_SETLIST, icon=ft.Icons.PLAYLIST_PLAY),
                     ], indicator_color=theme.ACCENT, label_color=theme.ACCENT,
                         unselected_label_color=theme.MUTED,
                         divider_color=theme.PANEL_EDGE,
@@ -226,6 +231,7 @@ class App:
                         system_pane.build(self),
                         midi_pane.build(self),
                         library_pane.build(self),
+                        setlist_pane.build(self),
                     ], expand=True),
                 ],
             ),
@@ -1184,6 +1190,7 @@ class App:
             self.system.refresh()
         statusbar.refresh(self)
         midi_pane.refresh(self)
+        setlist_pane.refresh(self)
         self.page.update()
 
     def _progress(self, done: int, total: int, verb: str) -> None:
@@ -1238,6 +1245,97 @@ class App:
                                     color=theme.MUTED),
                      pv.link_button("Continue without a backup", anyway, color=theme.MUTED),
                      pv.button("Back up first", ft.Icons.SAVE_ALT, back_up, primary=True)]))
+
+    # ---------------------------------------------------------------- setlist
+
+    def setlist_open(self, name: str) -> None:
+        """Open a library liveset as the setlist (nothing is played yet).
+
+        Args:
+            name: the liveset.
+        """
+        try:
+            self.setlist = Setlist.from_tsl(self.lib.load(name))
+        except Exception as e:                       # noqa: BLE001
+            self.set_status(f"Cannot open {name!r}: {e}")
+            return
+        self.set_status(f"Setlist {name!r}: {len(self.setlist.names)} patches; "
+                        "Next plays the first.")
+        setlist_pane.refresh(self)
+        self.page.update()
+
+    def setlist_step(self, op: str) -> None:
+        """Play the next or previous patch of the setlist (also from a MIDI
+        footswitch).
+
+        Args:
+            op: ``"next"`` or ``"prev"``.
+        """
+        sl = self.setlist
+        if sl is None:
+            return self.set_status("No setlist is open.")
+        i = sl.target(op)
+        if i is None:
+            return self.set_status("End of the setlist." if op == "next"
+                                   else "Start of the setlist.")
+        self.setlist_goto(i)
+
+    def setlist_goto(self, i: int) -> None:
+        """Play patch ``i`` of the setlist: it goes into the amp's edit buffer
+        (no slot is written) and into the editor, which then follows the amp.
+
+        Args:
+            i: the patch's position in the setlist (0-based).
+        """
+        from ..amp.write import write_edit_buffer
+        sl = self.setlist
+        if sl is None or not sl.playable(i) or not self._require_connected():
+            return
+        if self.busy:
+            return self.set_status("Wait for the current operation to finish.")
+        ps = sl.patch(i)
+        try:
+            write_edit_buffer(self.transport, ps)
+        except Exception as e:                       # noqa: BLE001
+            return self.set_status(f"Setlist: {e}")
+        self.live.clear()
+        with self.state_lock:
+            self.ps = ps
+            self.dirty = False
+            self.recent_writes.clear()
+        self.set_live_ready(True)
+        sl.index = i
+        self.set_status(f"Setlist {i + 1}/{len(sl.names)}: {sl.names[i] or '(no name)'}")
+        if self.ui_attached:
+            self.editor.refresh()
+            setlist_pane.refresh(self)
+            self.page.update()
+
+    def compare_with_amp(self) -> None:
+        """Compare the editor's patch with what the amp has stored in the same
+        slot (read now)."""
+        n = self.patch_number
+        self.read_amp_patch(n, lambda ps: self._ui(lambda: compare_dialog.show(
+            self, ps, f"{self.slot_name(n)} on the amp")))
+
+    def take_value(self, block: str, p_index: int, value: int) -> None:
+        """Set one parameter of the editor's patch from outside the editor
+        (the compare dialog): undoable, and sent to the amp when live.
+
+        Args:
+            block: the parameter's block name.
+            p_index: the parameter's index within the block.
+            value: the display value to set.
+        """
+        region = self.region_for(self.patch_number)
+        with self.state_lock:
+            old = self.ps.get_param(region, block, p_index)
+            self.history.record(self.ps, ("param", block, p_index), old, value)
+            self.ps.set_param(region, block, p_index, value)
+        self.mark_dirty()
+        self.param_changed(block, p_index, value)
+        if self.ui_attached:
+            self.editor.refresh()
 
     def _step_progress(self, done: int, total: int, text: str) -> None:
         """Like :meth:`_progress` for a job in steps (a backup or restore)."""

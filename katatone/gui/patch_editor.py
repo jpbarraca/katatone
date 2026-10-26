@@ -106,6 +106,9 @@ class PatchEditor:
             ft.Row([_button("Save to library", ft.Icons.LIBRARY_ADD,
                             lambda e: self._save_to_library())],
                    spacing=6),
+            ft.Row([_button("Compare with amp", ft.Icons.COMPARE_ARROWS,
+                            lambda e: self.app.compare_with_amp())],
+                   spacing=6),
         ], spacing=6)
         card = pv.module_card("User patches", [
             self.list_box, self.name_field, buttons, self.dirty_label])

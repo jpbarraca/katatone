@@ -7,8 +7,9 @@ events in order, so three quick footswitch presses become three channel
 switches in the right sequence.
 
 Safety: the router can only (a) select a channel, (b) write single parameters
-of the edit buffer through ``LiveWriter``. It never sends a patch write,
-export, clear or init, and never touches stored slots or SYSTEM/SETUP.
+of the edit buffer through ``LiveWriter``, (c) have the host play the next or
+previous patch of the open setlist into the edit buffer. It never sends a patch
+write, export, clear or init, and never touches stored slots or SYSTEM/SETUP.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ from ..amp.live import LiveWriter
 from .events import (ControlChange, MidiEvent, NoteOn, ProgramChange, describe)
 from .mapping import (EDIT_REGION, PEDAL_TYPE, Action, AmpNative, BankAction, ChannelFromPc,
                       ChannelSelect, ChannelStep, EffectAction, ExpressionAction,
+                      SetlistStep,
                       Mapping, Profile, UnknownAction, effect_param, find_param,
                       pedal_fx_type, resolve_expression, scale_range)
 
@@ -61,6 +63,7 @@ class RouterHost(Protocol):
                          mark_dirty: bool) -> None: ...
     def show_param(self, block: str, p_index: int, value: int) -> None: ...
     def status(self, msg: str) -> None: ...
+    def setlist_step(self, op: str) -> None: ...
 
 
 class Router:
@@ -356,6 +359,10 @@ class Router:
             if not self._need_amp():
                 return
             self._channel(a, ev)
+            return
+        if isinstance(a, SetlistStep):
+            if self._need_amp():
+                self.host.setlist_step(a.op)
             return
         if isinstance(a, AmpNative):
             if not AMP_NATIVE_ENABLED:
