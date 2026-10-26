@@ -28,7 +28,7 @@ from ..library.store import Library
 from ..midi.manager import MidiManager
 from ..model.paramset import ParamSet
 from ..protocol import rc6
-from . import theme
+from . import params_view as pv, theme
 from .history import EditHistory
 from .model import display_label
 from .headless import HeadlessPage
@@ -126,6 +126,7 @@ class App:
         self.ps = ParamSet()            # working patch
         self.dirty = False
         self.history = EditHistory()    # undo / redo of the edits to `ps`
+        self._backup_offered = False    # asked about a backup before overwriting a slot
         self.system_ps: ParamSet | None = None
         self.lib = Library()
         # Popen of the confined Tone Exchange webview (see tonecentral_open).
@@ -939,7 +940,9 @@ class App:
             return
         n = self.patch_number
         ps = self.ps
-        self.page.run_thread(self._write_thread, n, ps)
+        self._offer_backup_first(
+            f"Write overwrites {self.slot_name(n)}.",
+            lambda: self.page.run_thread(self._write_thread, n, ps))
 
     def _write_thread(self, n: int, ps: ParamSet) -> None:
         """Worker for :meth:`write_patch`.
@@ -988,7 +991,8 @@ class App:
         """
         if not self._require_connected():
             return
-        self.page.run_thread(self._clear_thread, n)
+        self._offer_backup_first(f"Clear erases {self.slot_name(n)}.",
+                                 lambda: self.page.run_thread(self._clear_thread, n))
 
     def _clear_thread(self, n: int) -> None:
         """Worker for :meth:`clear_patch`.
@@ -1201,6 +1205,40 @@ class App:
         self.progress.value = done / total if total else 0
         self.progress.update()
 
+    def _offer_backup_first(self, what: str, proceed) -> None:
+        """Run ``proceed`` (an operation that overwrites an amp slot), after
+        offering a backup of the whole amp, the first time in this session.
+
+        Args:
+            what: what the operation does to the amp, for the dialog.
+            proceed: the operation.
+        """
+        if self._backup_offered or not self.ui_attached:
+            return proceed()
+
+        def asked() -> None:
+            self._backup_offered = True
+            self.page.pop_dialog()
+
+        def anyway(e) -> None:
+            asked()
+            proceed()
+
+        def back_up(e) -> None:
+            asked()
+            self.backup_amp(self.library._offer_backup)
+
+        ft.context.disable_auto_update()
+        self.page.show_dialog(ft.AlertDialog(
+            title=ft.Text("Back up the amp first?"), bgcolor=theme.PANEL_TOP,
+            content=ft.Text(f"{what} It cannot be undone.  A backup saves all ten patches "
+                            "and the system settings to a file.  Backing up cancels this "
+                            "operation: run it again afterwards."),
+            actions=[pv.link_button("Cancel", lambda e: self.page.pop_dialog(),
+                                    color=theme.MUTED),
+                     pv.link_button("Continue without a backup", anyway, color=theme.MUTED),
+                     pv.button("Back up first", ft.Icons.SAVE_ALT, back_up, primary=True)]))
+
     def _step_progress(self, done: int, total: int, text: str) -> None:
         """Like :meth:`_progress` for a job in steps (a backup or restore)."""
         if not self.ui_attached:
@@ -1389,7 +1427,9 @@ class App:
         """
         if not self._require_connected():
             return
-        self.page.run_thread(self._write_amp_thread, n, ps, name)
+        self._offer_backup_first(
+            f"This overwrites {self.slot_name(n)}.",
+            lambda: self.page.run_thread(self._write_amp_thread, n, ps, name))
 
     def _write_amp_thread(self, n: int, ps: ParamSet, name: str | None) -> None:
         """Worker for :meth:`write_amp_patch`.

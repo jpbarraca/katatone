@@ -13,8 +13,9 @@ window or as a browser interface, for example on a Raspberry Pi next to the amp.
 
 > **Unofficial.**  Not affiliated with or endorsed by Roland or BOSS.  BOSS,
 > Katana, BOSS TONE EXCHANGE and BOSS TONE CENTRAL are trademarks of Roland.
-> Writing to an amp is at your own risk: save your patches to the library
-> before overwriting amp slots.
+> Writing to an amp is at your own risk: save your patches to the library or
+> [back up the amp](docs/backup.md) before overwriting amp slots.  KataTone offers
+> a backup the first time you write, clear or send a patch to a slot.
 
 ## Features
 

@@ -19,6 +19,11 @@ Before a restore overwrites anything, KataTone saves what the amp holds now to
 (`~/.local/share/katatone/backups`), so a restore can be undone by restoring
 that file.
 
+The first time in a session that you write a patch, clear a slot or send a
+library patch to the amp, KataTone asks whether to back up first.  **Back up
+first** makes the backup and cancels that operation (run it again afterwards);
+**Continue without a backup** goes ahead.  It asks once per session.
+
 ## On the command line
 
 ```bash

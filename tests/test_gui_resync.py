@@ -76,6 +76,7 @@ def app(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.setattr(bc.BaseControl, "update", lambda self: None)
     a = app_mod.App(StubPage(), start_midi=False)
+    a._backup_offered = True        # these tests are about the writes, not the offer
     a.connected = True
     a.transport = object()
     a.reads = []                    # slots actually read, in order

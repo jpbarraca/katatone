@@ -116,3 +116,66 @@ def test_the_backup_is_offered_as_a_file(app, monkeypatch) -> None:
     assert name.endswith(".ktbackup") and ext == "ktbackup"
     assert bk.Backup.from_json(data.decode()).names()[0] == "Tone 1"
     assert app.last_status == "Backed up the amp -> /tmp/x"
+
+
+# ---- the offer to back up before overwriting a slot ----
+
+def buttons(app):
+    """The dialog's action buttons by label."""
+    def label(b):
+        c = b.content
+        return getattr(c, "value", None) or getattr(c, "text", None) or getattr(b, "text", None)
+    dlg = app.page.dialogs[-1]
+    return {label(b): b.on_click for b in dlg.actions}
+
+
+@pytest.fixture
+def writes(app, monkeypatch):
+    """Record the slot writes and clears the app would start."""
+    done = []
+    monkeypatch.setattr(app, "_write_thread", lambda n, ps: done.append(("write", n)))
+    monkeypatch.setattr(app, "_clear_thread", lambda n: done.append(("clear", n)))
+    monkeypatch.setattr(app, "_write_amp_thread", lambda n, ps, name: done.append(("send", n)))
+    return done
+
+
+def test_the_first_overwrite_offers_a_backup_and_waits(app, writes) -> None:
+    app.write_patch()
+    app.page.join()
+    assert writes == [] and len(app.page.dialogs) == 1
+
+
+def test_continue_without_a_backup_writes_and_stops_asking(app, writes) -> None:
+    app.write_patch()
+    buttons(app)["Continue without a backup"](None)
+    app.page.join()
+    assert writes == [("write", app.patch_number)] and not app.page.dialogs
+    app.clear_patch(2)
+    app.write_amp_patch(3, make_backup().patches[0], None)
+    app.page.join()
+    assert writes[1:] == [("clear", 2), ("send", 3)] and not app.page.dialogs
+
+
+def test_back_up_first_backs_up_and_does_not_write(app, writes, monkeypatch) -> None:
+    started = []
+    app.library = types_namespace(_offer_backup=lambda b: None)
+    monkeypatch.setattr(app, "backup_amp", lambda on_done: started.append(on_done))
+    app.clear_patch(2)
+    buttons(app)["Back up first"](None)
+    app.page.join()
+    assert started == [app.library._offer_backup] and writes == []
+    app.clear_patch(2)                       # asked once: the next one goes ahead
+    app.page.join()
+    assert writes == [("clear", 2)]
+
+
+def test_cancel_leaves_the_amp_alone_and_asks_again(app, writes) -> None:
+    app.write_patch()
+    buttons(app)["Cancel"](None)
+    app.write_patch()
+    assert writes == [] and len(app.page.dialogs) == 1
+
+
+def types_namespace(**kw):
+    import types
+    return types.SimpleNamespace(**kw)
