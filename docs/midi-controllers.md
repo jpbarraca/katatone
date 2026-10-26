@@ -37,8 +37,9 @@ Notes and limits:
   "Amp channel" card and the patch are re-read after a short pause.
 - A controller is opened exclusively; if another program holds it the tab shows
   "in use by another program" and retries.
-- **CV** needs a CV-to-MIDI converter. **Bluetooth MIDI** and software ports
-  are not supported (use USB).
+- **CV** needs a CV-to-MIDI converter.
+- **Bluetooth MIDI** controllers work once the system has connected them; see
+  [Bluetooth and other sequencer devices](#bluetooth-and-other-sequencer-devices).
 - Run `python -m katatone.gui -v` to log every event and action
   (`katatone.midi.*`); `python dev/midi_capture.py "<name>"` prints raw events.
 
