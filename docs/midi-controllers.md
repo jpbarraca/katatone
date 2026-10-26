@@ -29,6 +29,25 @@ Learn stops at the first message it receives. A CC whose first value is 0 or
 127 is taken for a switch, any other value for a pedal; if a pedal happens to
 start at an end stop, change *Mode* to Range in the dialog.
 
+## Presets
+
+**From preset...** next to the profile list makes a new profile from a ready-made one:
+
+| Preset | What it maps |
+|---|---|
+| Program change pedal | any program change selects a channel, as in the amp's own table |
+| Channel up / down | CC 80 next channel, CC 81 previous channel |
+| Effect switches | CC 80 to 83 toggle booster, mod, delay and reverb |
+| Wah / expression pedal | CC 11 moves the pedal FX (wah, bend or 95E) |
+| Volume pedal | CC 7 sets the amp volume |
+| Setlist switches | CC 80 next, CC 81 previous patch of the open [setlist](setlist.md) |
+
+The numbers are the usual ones for such pedals (CC 80 to 83 are the standard
+"general purpose" controllers that foot controllers often send; 11 is expression and
+7 volume), so they are a starting point: open a mapping and use **Learn** to match
+your own pedal.  A preset names no controller, so enable yours under **Controllers**.
+To share a profile with someone else, use **Export...** and **Import...**.
+
 Notes and limits:
 
 - Effect switches and expression only change the amp's live **edit buffer**;

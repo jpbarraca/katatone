@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import flet as ft
 
 from ..midi.events import MidiEvent, describe
+from ..midi import presets
 from ..midi.mapping import Mapping, Profile, UnknownAction
 from . import dialogs, files, params_view as pv, theme
 from .mapping_dialog import MappingDialog
@@ -129,6 +130,7 @@ class _MidiPane:
         profile_row = ft.Row([
             self.profile_dd,
             pv.button("New", ft.Icons.ADD, self._new_profile),
+            pv.button("From preset...", ft.Icons.AUTO_AWESOME, self._from_preset),
             pv.button("Rename", ft.Icons.DRIVE_FILE_RENAME_OUTLINE, self._rename_profile),
             pv.button("Duplicate", ft.Icons.CONTENT_COPY, self._duplicate_profile),
             pv.button("Delete", ft.Icons.DELETE_OUTLINE, self._delete_profile),
@@ -379,6 +381,39 @@ class _MidiPane:
             self.midi.store.save(Profile(name=name))
             self._switch(name)
         dialogs.prompt(self.app.page, "New profile", "", ok)
+
+    def _from_preset(self, e=None) -> None:
+        """Make a new profile from a ready-made one (see ``midi.presets``)."""
+        ft.context.disable_auto_update()
+        page = self.app.page
+        chosen = {"preset": presets.PRESETS[0]}
+        about = ft.Text(chosen["preset"].description, size=12, color=theme.MUTED, width=380)
+
+        def pick(e) -> None:
+            chosen["preset"] = next(p for p in presets.PRESETS if p.name == e.control.value)
+            about.value = chosen["preset"].description
+            _push(about)
+
+        def ok(e=None) -> None:
+            page.pop_dialog()
+            prof = presets.create(self.midi.store, chosen["preset"])
+            self.app.set_status(
+                f"Created profile {prof.name!r}: use Learn on a mapping to match your "
+                "controller, and enable it under Controllers.")
+            self._switch(prof.name)
+
+        page.show_dialog(ft.AlertDialog(
+            title=ft.Text("New profile from a preset"), bgcolor=theme.PANEL_TOP,
+            content=ft.Column([
+                ft.Dropdown(value=presets.PRESETS[0].name, width=380, on_select=pick,
+                            options=[ft.DropdownOption(key=p.name, text=p.name)
+                                     for p in presets.PRESETS], **pv.FIELD_STYLE),
+                about,
+                ft.Text("The controller numbers are the usual ones; Learn changes them to "
+                        "your pedal's.", size=11, color=theme.MUTED, width=380)],
+                tight=True, spacing=10),
+            actions=[pv.link_button("Cancel", lambda e: page.pop_dialog(), color=theme.MUTED),
+                     pv.button("Create", ft.Icons.CHECK, ok, primary=True)]))
 
     def _rename_profile(self, e=None) -> None:
         """Rename the active profile."""
