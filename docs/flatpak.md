@@ -32,6 +32,12 @@ in `~/.var/app/io.github.jpbarraca.katatone/data/katatone`, apart from the
 or link the two folders.  Files for **Import** and **Export** are chosen with the
 desktop's file chooser (through `zenity` and the desktop portal).
 
+`ALSA_CONFIG_PATH` points to `/app/share/katatone/alsa.conf` (`packaging/flatpak/alsa.conf`):
+the runtime's own ALSA configuration plus a numeric group id for sharing the sound card.
+Without it the Tuner and the Analyzer could not capture from the card's `sysdefault` input,
+which is the one they preselect: the runtime names the group `audio`, the sandbox has no such
+group, and `arecord` stopped with "The field ipc_gid must be a valid group".
+
 `KATATONE_NO_BLUETOOTH=1` is set in the sandbox so that the main window does not report a
 missing Bluetooth package.
 

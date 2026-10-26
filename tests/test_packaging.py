@@ -18,3 +18,16 @@ def test_every_non_python_file_in_the_package_is_declared_as_package_data() -> N
                if p.is_file() and p.suffix not in (".py", ".pyc") and "__pycache__" not in p.parts}
     assert present <= declared, f"not installed with the package: {sorted(present - declared)}"
     assert "gui/param_labels.json" in declared     # without it every selector shows as a dial
+
+
+def test_the_flatpak_sandbox_has_an_alsa_config_with_a_group_id_that_exists() -> None:
+    """Regression: in the sandbox the runtime's ipc_gid is the group name "audio", which does
+    not exist there, so capturing from "sysdefault:CARD=..." (the Tuner's and the Analyzer's
+    default) failed with "The field ipc_gid must be a valid group"."""
+    manifest = (ROOT / "packaging/flatpak/io.github.jpbarraca.katatone.yml").read_text()
+    assert "--env=ALSA_CONFIG_PATH=/app/share/katatone/alsa.conf" in manifest
+    assert "install -Dm644 packaging/flatpak/alsa.conf -t /app/share/katatone" in manifest
+    conf = [ln.strip() for ln in (ROOT / "packaging/flatpak/alsa.conf").read_text().splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")]
+    assert conf[0] == "</usr/share/alsa/alsa-flatpak.conf>"         # the runtime's own configuration
+    assert conf[1:] == ['defaults.pcm.ipc_gid "0"']                  # a quoted string, as ALSA needs

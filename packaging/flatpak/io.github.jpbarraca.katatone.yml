@@ -22,6 +22,9 @@ finish-args:
   # the first start), and Bluetooth is not part of this package.
   - --env=FLET_VIEW_PATH=/app/flet-client/flet
   - --env=KATATONE_NO_BLUETOOTH=1
+  # The runtime's ALSA configuration plus a group id that exists in the sandbox (see the file):
+  # without it the sound card cannot be shared and arecord fails.
+  - --env=ALSA_CONFIG_PATH=/app/share/katatone/alsa.conf
 
 modules:
   # arecord, used by the Tuner and the Analyzer to read the sound card.
@@ -76,6 +79,7 @@ modules:
     buildsystem: simple
     build-commands:
       - pip3 install --no-index --no-deps --no-build-isolation --prefix=/app .
+      - install -Dm644 packaging/flatpak/alsa.conf -t /app/share/katatone
       - install -Dm644 packaging/flatpak/io.github.jpbarraca.katatone.desktop -t /app/share/applications
       - install -Dm644 packaging/flatpak/io.github.jpbarraca.katatone.metainfo.xml -t /app/share/metainfo
       - install -Dm644 packaging/flatpak/io.github.jpbarraca.katatone.svg
