@@ -44,12 +44,15 @@ flatpak-builder --user --install --force-clean --disable-rofiles-fuse \
     --state-dir=/tmp/katatone-fp /tmp/katatone-fp-build io.github.jpbarraca.katatone.yml
 ```
 
-To make the file for a release (after building as above, with `--repo=/tmp/katatone-repo`
-added to the `flatpak-builder` command):
+To make the file of a release by hand (after building as above, with
+`--repo=/tmp/katatone-repo` added to the `flatpak-builder` command):
 
 ```bash
 flatpak build-bundle /tmp/katatone-repo katatone-0.4.1-x86_64.flatpak io.github.jpbarraca.katatone master
 ```
+
+A release does not need this: pushing a version tag builds and attaches the file, see
+[Releasing](development.md#releasing).
 
 Two parts are pinned and have to be refreshed by hand when they change:
 

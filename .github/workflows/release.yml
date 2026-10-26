@@ -1,0 +1,108 @@
+name: Release
+
+# Pushing a tag vX.Y.Z builds the Flatpak, the wheel and the source archive and
+# attaches them to the GitHub release of that tag (creating it if it is not there).
+# "Run workflow" builds the same files without publishing, to try this out.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Versions agree
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          version=$(python3 packaging/check_version.py "$TAG")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  dist:
+    name: Wheel and source archive
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install build && python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  flatpak:
+    name: Flatpak
+    needs: check
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Flatpak and the GNOME 50 runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub org.gnome.Platform//50 org.gnome.Sdk//50
+      - name: Build
+        working-directory: packaging/flatpak
+        run: |
+          flatpak-builder --user --force-clean --disable-rofiles-fuse \
+              --state-dir="$RUNNER_TEMP/fp-state" --repo="$RUNNER_TEMP/fp-repo" \
+              "$RUNNER_TEMP/fp-build" io.github.jpbarraca.katatone.yml
+      - name: Make the bundle
+        run: |
+          flatpak build-bundle "$RUNNER_TEMP/fp-repo" "katatone-$VERSION-x86_64.flatpak" \
+              io.github.jpbarraca.katatone master
+          sha256sum "katatone-$VERSION-x86_64.flatpak" > "katatone-$VERSION-x86_64.flatpak.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: katatone-*
+
+  publish:
+    name: Publish the release
+    if: github.ref_type == 'tag'
+    needs: [check, dist, flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the notes list the commits since the previous tag
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
+          merge-multiple: true
+      - name: Write the release notes
+        run: |
+          prev=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          {
+            sed "s/@VERSION@/$VERSION/g" packaging/release-notes.md
+            printf '\n## Changes\n\n'
+            git log --no-merges --pretty='- %s' ${prev:+"$prev.."}"$TAG"
+          } > notes.md
+      - name: Attach the files to the release
+        run: |
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" files/* --clobber
+          else
+            gh release create "$TAG" files/* --title "KataTone $VERSION" \
+                --notes-file notes.md --verify-tag
+          fi
