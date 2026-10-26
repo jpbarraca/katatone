@@ -29,6 +29,14 @@ Learn stops at the first message it receives. A CC whose first value is 0 or
 127 is taken for a switch, any other value for a pedal; if a pedal happens to
 start at an end stop, change *Mode* to Range in the dialog.
 
+## The last message
+
+The top of the **Monitor** shows the newest message and what it does: for example
+`SINCO MIDI 1 · ch 1 · CC 80 (switch)  →  Booster toggle`.  When no mapping handles it,
+it says `not mapped` and offers **Map it...**, which opens a new mapping already
+set to that control (as if Learn had caught it), with the likely action preselected.
+**Clear** resets it.
+
 ## Presets
 
 **From preset...** next to the profile list makes a new profile from a ready-made one:

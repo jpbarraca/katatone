@@ -26,6 +26,7 @@ import flet as ft
 
 from ..midi.events import MidiEvent, describe
 from ..midi import presets
+from ..midi.learn import LearnResult, decide
 from ..midi.mapping import Mapping, Profile, UnknownAction
 from . import dialogs, files, params_view as pv, theme
 from .mapping_dialog import MappingDialog
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 log = logging.getLogger("katatone.gui.midi")
 
 TAB_MIDI = "MIDI"
+NO_MESSAGE = "No message yet: press a footswitch or move a pedal."
 MONITOR_LINES = 50
 MONITOR_PERIOD_S = 0.1
 LED_HOLD_S = 0.15
@@ -119,7 +121,14 @@ class _MidiPane:
         # Monitor
         self.monitor_box = ft.Column(spacing=2, height=190, scroll=ft.ScrollMode.AUTO)
         self.pause_btn = pv.button("Pause", ft.Icons.PAUSE, self._toggle_pause)
+        # The newest message and what it does; "Map it" starts a mapping from it.
+        self.last_text = ft.Text(NO_MESSAGE, size=13, color=theme.MUTED, expand=True)
+        self.map_btn = pv.button("Map it...", ft.Icons.ADD, self._map_last)
+        self.map_btn.visible = False
+        self._last: LearnResult | None = None
         self.monitor_card = pv.module_card("Monitor", [
+            ft.Row([self.last_text, self.map_btn], spacing=10,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
             self.monitor_box,
             ft.Row([self.pause_btn,
                     pv.button("Clear", ft.Icons.CLEAR_ALL, self._clear_monitor)], spacing=8)])
@@ -315,6 +324,38 @@ class _MidiPane:
         for when, device, ev, labels in batch:
             self._lines.appendleft((when, device, ev, labels))
         self._paint_monitor()
+        self._show_last(*batch[-1][1:])
+
+    def _show_last(self, device: str, ev, labels: list[str]) -> None:
+        """Say what the newest message is and what it does, and offer to map it
+        when nothing handles it.
+
+        Args:
+            device: the port label.
+            ev: the event.
+            labels: what the active profile did with it (empty: nothing).
+        """
+        try:
+            result = decide(device, ev)
+        except AssertionError:                      # a message Learn cannot turn into a trigger
+            result = None
+        where = result.description if result else f"{device} · {describe(ev)}"
+        if labels == ["learning"]:
+            text, color, self._last = f"{where}  (taken by Learn)", theme.MUTED, None
+        elif labels:
+            text, color, self._last = f"{where}  →  {', '.join(labels)}", theme.FOREGROUND, None
+        else:
+            text, color, self._last = f"{where}  →  not mapped", theme.ACCENT, result
+        self.last_text.value, self.last_text.color = text, color
+        self.map_btn.visible = self._last is not None
+        _push(self.last_text)
+        _push(self.map_btn)
+
+    def _map_last(self, e=None) -> None:
+        """Start a new mapping from the last unmapped message."""
+        if self._last is not None:
+            ft.context.disable_auto_update()
+            MappingDialog(self.app, self.midi, None, self._on_saved, learned=self._last).show()
 
     def _paint_monitor(self) -> None:
         """Redraw the monitor from `_lines`."""
@@ -342,6 +383,10 @@ class _MidiPane:
             self._pending.clear()
         self._lines.clear()
         self._paint_monitor()
+        self.last_text.value, self.last_text.color = NO_MESSAGE, theme.MUTED
+        self._last, self.map_btn.visible = None, False
+        _push(self.last_text)
+        _push(self.map_btn)
 
     # -- profiles ------------------------------------------------------------
 

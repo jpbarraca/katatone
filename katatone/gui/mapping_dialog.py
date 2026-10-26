@@ -93,7 +93,8 @@ class MappingDialog:
     """Builds and shows the editor for one mapping."""
 
     def __init__(self, app: App, midi: MidiManager, mapping: Mapping | None,
-                 on_save: Callable[[Mapping, bool], None]) -> None:
+                 on_save: Callable[[Mapping, bool], None],
+                 learned: LearnResult | None = None) -> None:
         """Prepare the dialog.
 
         Args:
@@ -101,6 +102,8 @@ class MappingDialog:
             midi: the MIDI manager (Learn, controllers, test).
             mapping: the mapping to edit, or None to create one.
             on_save: called as `on_save(mapping, is_new)` on Save.
+            learned: a new mapping starts from this control (the last message
+                the MIDI tab saw) as if Learn had captured it.
         """
         self.app, self.midi, self.on_save = app, midi, on_save
         self.is_new = mapping is None
@@ -143,6 +146,9 @@ class MappingDialog:
             actions=[pv.link_button("Test", self._test, color=theme.ACCENT),
                      pv.link_button("Cancel", self._cancel, color=theme.MUTED),
                      pv.button("Save", ft.Icons.CHECK, self._save, primary=True)])
+        if learned is not None:
+            self._learned(learned)
+            self.learn_text.value = f"From the last message: {learned.description}"
 
     # -- public --------------------------------------------------------------
 
