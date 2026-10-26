@@ -24,7 +24,8 @@ def test_web_banner_warns_about_default_password_without_printing_it() -> None:
     banner = gui_app.web_banner("127.0.0.1", 8550, default_password=True)
     assert "factory password is still set" in banner
     assert "change it at the first login" in banner
-    assert DEFAULT_PASSWORD not in banner
+    # the factory password is the product name, which the title line also has
+    assert DEFAULT_PASSWORD not in banner.replace("KataTone web GUI", "")
 
 
 class _FakeApp:
