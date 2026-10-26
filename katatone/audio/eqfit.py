@@ -15,7 +15,7 @@ whatever EQ the amp is already using.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -107,6 +107,10 @@ class EqFit:
         settings: ``(name, text)`` for every control, in the amp's order.
         response: what the setting does to the spectrum, in dB, on the display points.
         before, after: weighted RMS (dB) of what is left to correct without and with it.
+        values: the setting as numbers, for applying it to a patch (see
+            ``katatone.model.eqapply``): ``{"gains": [10 dB values]}`` for GE-10;
+            ``{"low": dB, "high": dB, "mids": [[freq index, Q index, dB], ...]}`` for
+            PEQ (the lower band first, an unused band has 0 dB).
     """
 
     kind: str
@@ -114,6 +118,7 @@ class EqFit:
     response: np.ndarray
     before: float
     after: float
+    values: dict = field(default_factory=dict)
 
     @property
     def useful(self) -> bool:
@@ -163,7 +168,9 @@ def fit_graphic(correction: np.ndarray, freqs: np.ndarray, rate: int = RATE) -> 
     gains = idx - PROPOSE_DB
     settings = [(label, f"{g:+d} dB" if abs(g) >= MIN_GAIN_DB else "0 dB")
                 for label, g in zip(GE_LABELS, gains)]
-    return EqFit("GE-10", settings, total, _rms(correction, w), _rms(correction - total, w))
+    kept = [int(g) if abs(g) >= MIN_GAIN_DB else 0 for g in gains]
+    return EqFit("GE-10", settings, total, _rms(correction, w), _rms(correction - total, w),
+                 {"gains": kept})
 
 
 _PEQ_TABLES: dict = {}
@@ -224,7 +231,14 @@ def fit_parametric(correction: np.ndarray, freqs: np.ndarray, rate: int = RATE) 
         settings.append((name, "off" if text == "0 dB" else
                          f"{PEQ_FREQS[f]:g} Hz Q {PEQ_Q[q]:g} {text}"))
     settings.append(("High", gain_text(hi_i)))
-    return EqFit("PEQ", settings, resp, _rms(correction, w), _rms(correction - resp, w))
+
+    def kept(i: int) -> int:
+        g = i - zero
+        return g if abs(g) >= MIN_GAIN_DB else 0
+
+    values = {"low": kept(lo_i), "high": kept(hi_i),
+              "mids": [[f, q, kept(g)] for f, q, g in mids]}
+    return EqFit("PEQ", settings, resp, _rms(correction, w), _rms(correction - resp, w), values)
 
 
 def fit_all(correction: np.ndarray, freqs: np.ndarray, rate: int = RATE) -> dict[str, EqFit]:

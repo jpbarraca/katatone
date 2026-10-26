@@ -11,6 +11,8 @@ Run with:  ``python -m katatone.gui.app``
 from __future__ import annotations
 
 import asyncio
+import itertools
+import json
 import logging
 import threading
 import time
@@ -26,6 +28,7 @@ from ..amp import slots
 from ..amp.live import LiveWriter
 from ..library.store import Library
 from ..midi.manager import MidiManager
+from ..model import eqapply
 from ..model.paramset import ParamSet
 from ..protocol import rc6
 from ..setlist import Setlist
@@ -129,6 +132,7 @@ class App:
         self.ps = ParamSet()            # working patch
         self.dirty = False
         self.history = EditHistory()    # undo / redo of the edits to `ps`
+        self._group_ids = itertools.count()     # tells grouped edits (an applied EQ) apart
         self.setlist: Setlist | None = None     # the liveset open on the SETLIST tab
         self._backup_offered = False    # asked about a backup before overwriting a slot
         self.system_ps: ParamSet | None = None
@@ -1141,6 +1145,11 @@ class App:
                 if edit.key[0] == "name":
                     self.ps.set_block("PATCH%COM", value)
                     what = "the patch name"
+                elif edit.key[0] == "group":
+                    region = self.region_for(self.patch_number)
+                    for block, p_index, v in value:
+                        self.ps.set_param(region, block, p_index, v)
+                    what = edit.key[1]
                 else:
                     _, block, p_index = edit.key
                     region = self.region_for(self.patch_number)
@@ -1151,6 +1160,9 @@ class App:
         self.mark_dirty()
         if edit.key[0] == "name":
             self.name_changed(ParamSet.patch_name(value))
+        elif edit.key[0] == "group":
+            for block, p_index, v in value:
+                self.param_changed(block, p_index, v)
         else:
             self.param_changed(block, p_index, value)
         self.set_status(f"{verb} {what}.")
@@ -1317,6 +1329,34 @@ class App:
         n = self.patch_number
         self.read_amp_patch(n, lambda ps: self._ui(lambda: compare_dialog.show(
             self, ps, f"{self.slot_name(n)} on the amp")))
+
+    def apply_eq(self, kind: str, values: dict) -> None:
+        """Apply an EQ proposal of the analyzer to the editor's patch as one
+        undoable step (see ``katatone.model.eqapply``).
+
+        Args:
+            kind: ``"GE-10"`` or ``"PEQ"``.
+            values: the proposal's ``EqFit.values``.
+        """
+        if self.busy:
+            return self.set_status("Wait for the current operation to finish.")
+        with self.state_lock:
+            plan = eqapply.plan(self.ps, kind, values)
+            if plan.changes:
+                region = self.region_for(self.patch_number)
+                before = [(b, i, self.ps.get_param(region, b, i)) for b, i, _ in plan.changes]
+                self.history.record(self.ps, ("group", "the EQ", next(self._group_ids)),
+                                    before, plan.changes)
+                for b, i, v in plan.changes:
+                    self.ps.set_param(region, b, i, v)
+        self.set_status(plan.note)
+        if not plan.changes:
+            return
+        self.mark_dirty()
+        for b, i, v in plan.changes:
+            self.param_changed(b, i, v)
+        if self.ui_attached:
+            self.editor.refresh()
 
     def take_value(self, block: str, p_index: int, value: int) -> None:
         """Set one parameter of the editor's patch from outside the editor
@@ -1696,18 +1736,34 @@ class App:
         """Open the analyzer window (level meter and spectrum of a sound-card
         input) in its own process, unless it is already open.
 
-        The window shares nothing with the editor; the amp's card name is
-        only passed so the right input is preselected.  Its output goes to
-        ``analyzer.log`` in the data dir when ``--log`` is given (else discarded).
+        The amp's card name is passed so the right input is preselected.  The
+        window listens to the sound card on its own; the one thing it sends back
+        is an EQ proposal to apply (an ``EQ {json}`` line on its stdout, see
+        :meth:`_follow_analyzer`).  Its log goes to ``analyzer.log`` in the data
+        dir when ``--log`` is given (else discarded).
         """
         self.an_proc = self._open_tool(self.an_proc, "katatone.gui.analyzer", "analyzer",
-                                       "Analyzer")
+                                       "Analyzer", pipe="--apply-pipe")
+        if self.an_proc is not None and getattr(self.an_proc, "stdout", None):
+            threading.Thread(target=self._follow_analyzer, args=(self.an_proc,),
+                             daemon=True).start()
+
+    def _follow_analyzer(self, proc) -> None:
+        """Apply the EQ proposals the analyzer window sends."""
+        for line in proc.stdout:
+            if not line.startswith("EQ "):
+                continue
+            try:
+                msg = json.loads(line[3:])
+                self.apply_eq(msg["kind"], msg["values"])
+            except (ValueError, KeyError, TypeError, IndexError) as e:
+                self.set_status(f"Cannot apply the EQ proposal: {e}")
 
     def open_tuner(self) -> None:
         """Open the guitar tuner window in its own process, unless it is
         already open (it is built like the analyzer, see :meth:`open_analyzer`)."""
         self.tuner_proc = self._open_tool(self.tuner_proc, "katatone.gui.tuner", "tuner",
-                                          "Tuner", mute_pipe=True)
+                                          "Tuner", pipe="--mute-pipe")
         if self.tuner_proc is not None and getattr(self.tuner_proc, "stdout", None):
             threading.Thread(target=self._follow_tuner, args=(self.tuner_proc,),
                              daemon=True).start()
@@ -1730,7 +1786,7 @@ class App:
         self.set_mute(mute)
 
     def _open_tool(self, proc, module: str, name: str, title: str,
-                   mute_pipe: bool = False):
+                   pipe: str | None = None):
         """Start a sound-card tool window as its own process.
 
         Only used on the desktop: a browser session opens the tool as another
@@ -1741,6 +1797,8 @@ class App:
             module: the module to run (``python -m``).
             name: its log's base name and the word used in status messages.
             title: its title for status messages.
+            pipe: the flag that makes the tool talk to this window on its stdout
+                (``--mute-pipe`` or ``--apply-pipe``), or None.
         Returns:
             The process now running (the old one if it was still open), or None.
         """
@@ -1749,7 +1807,7 @@ class App:
         if proc is not None and proc.poll() is None:
             self.set_status(f"The {name} window is already open.")
             return proc
-        cmd = [sys.executable, "-m", module] + (["--mute-pipe"] if mute_pipe else [])
+        cmd = [sys.executable, "-m", module] + ([pipe] if pipe else [])
         card = getattr(getattr(self, "sb_amp", None), "value", None)
         if card:
             cmd += ["--card", card]
@@ -1757,8 +1815,8 @@ class App:
             log_file = _open_log(f"{name}.log")
             try:
                 proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE if mute_pipe else subprocess.DEVNULL,
-                    stderr=log_file or subprocess.DEVNULL, text=mute_pipe)
+                    cmd, stdout=subprocess.PIPE if pipe else subprocess.DEVNULL,
+                    stderr=log_file or subprocess.DEVNULL, text=bool(pipe))
             finally:
                 if log_file:
                     log_file.close()
@@ -1922,6 +1980,8 @@ def _open_web_session(page: ft.Page, backend: App,
         page.clean()
         extra = ({"on_mute": backend.set_tuner_mute}
                  if getattr(tool_class, "wants_mute", False) else {})
+        if getattr(tool_class, "wants_apply", False):
+            extra["on_apply"] = backend.apply_eq
         tool = tool_class(page, backend.amp_port, **extra)
 
     def hide(e=None) -> None:

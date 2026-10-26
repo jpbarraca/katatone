@@ -48,10 +48,11 @@ def _app(tmp_path, monkeypatch):
     return app, status
 
 
-def test_open_analyzer_passes_only_the_card(tmp_path, monkeypatch) -> None:
+def test_open_analyzer_passes_the_card_and_asks_for_the_apply_pipe(tmp_path, monkeypatch) -> None:
     app, status = _app(tmp_path, monkeypatch)
     app.open_analyzer()
-    assert _Proc.cmd[1:] == ["-m", "katatone.gui.analyzer", "--card", "KATANA3"]
+    assert _Proc.cmd[1:] == ["-m", "katatone.gui.analyzer", "--apply-pipe", "--card", "KATANA3"]
+    assert _Proc.kw["stdout"] == subprocess.PIPE
 
 
 def test_analyzer_output_is_discarded_unless_log_is_on(tmp_path, monkeypatch) -> None:

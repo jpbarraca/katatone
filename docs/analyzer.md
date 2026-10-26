@@ -62,6 +62,24 @@ gear.
   Choose a proposal in **EQ preview** to draw your spectrum as it would be with it
   (orange) and to see the difference that would be left.  Not offered for *Take A vs
   take B* (take A is not what the amp is doing now) or while the input is stopped.
+- **Apply to editor** (next to EQ preview, enabled once a proposal worth applying is chosen)
+  sends the proposal to the patch in the editor's window, as **one step that Undo (Ctrl+Z)
+  takes back**.  It is sent to the amp too when the editor is live, so you hear it, and the
+  patch is marked as edited (use *Write* to keep it).  The proposal is meant to go on top of
+  the EQ the amp already uses, so:
+  - an EQ slot of the patch that is on and of the same kind is **adjusted**: the graphic
+    bands and the shelf gains are added to what is there (within the amp's limits); a mid
+    band of a parametric EQ is only set if it has no gain yet, otherwise it is skipped and
+    the status line says so;
+  - otherwise an EQ slot that is off is switched on, set to that kind and filled;
+  - if both EQ slots are on and of the other kind, nothing is changed and the status line
+    says why (switch one off, or change its kind).
+
+  Only the EQ is applied.  The gain remark in the hints (*Clean*, *Crunch* ...) is a guess
+  from the recording and stays advice.  When the editor is live the amp's sound changes and
+  the analyzer measures it again (the hints refresh twice a second), so the proposal shrinks
+  as you get close.  When it is not live (the amp is not connected, or the editor does not
+  mirror it) the sound does not change, so pressing Apply again adds the same proposal again.
 - **Notes** (in the hints, once at least three clear notes were played): from the last
   12 seconds of playing and from the reference, the typical note's attack time, how fast it
   decays (dB/s), how much level is left 300 ms after the peak and the spectral centre

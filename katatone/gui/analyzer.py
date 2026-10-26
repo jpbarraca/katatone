@@ -9,6 +9,7 @@ spectrum on the right.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import threading
 import time
@@ -122,14 +123,22 @@ def spec_y(db: float, height: float) -> float:
 class Analyzer:
     """The window: builds the controls and runs the capture / update loops."""
 
-    def __init__(self, page: ft.Page, card: str | None = None) -> None:
+    #: Tells the server it may pass ``on_apply`` (the tuner has no such option).
+    wants_apply = True
+
+    def __init__(self, page: ft.Page, card: str | None = None, on_apply=None) -> None:
         """Build the window and start listening.
 
         Args:
             page: the Flet page.
             card: ALSA card id to preselect (e.g. ``KATANA3``).
+            on_apply: called as ``on_apply(kind, values)`` to apply the proposed EQ
+                to the editor's patch (``kind`` is ``"GE-10"`` or ``"PEQ"``); None (no
+                link to the editor) disables the button.
         """
         self.page = page
+        self._on_apply = on_apply
+        self._sent_until = 0.0
         page.title = "KataTone Analyzer"
         page.bgcolor = theme.BG
         page.theme_mode = ft.ThemeMode.DARK
@@ -218,6 +227,10 @@ class Analyzer:
             tooltip="Draws your spectrum as it would be with the proposed EQ (orange), and the "
                     "difference that would be left",
             on_select=lambda e: self._set_preview(), **pv.FIELD_STYLE)
+        self.apply_btn = pv.button("Apply to editor", ft.Icons.TUNE, lambda e: self._apply_eq())
+        self.apply_btn.disabled = True
+        self.apply_btn.tooltip = ("Choose a proposal in EQ preview to apply it" if on_apply
+                                  else "No connection to the editor")
         self.lower = ft.Dropdown(
             label="Lower panel", width=160, value="diff",
             options=[ft.DropdownOption(key=k, text=v) for k, v in LOWER_PANELS.items()],
@@ -262,7 +275,7 @@ class Analyzer:
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Row([self.ref_btn, self.ref_label, self.ref_clear,
                     ft.Container(self.match, width=140),       # a bare labelled Checkbox fills the row
-                    self.take_a, self.take_b, self.compare_dd, self.eq_preview, self.lower,
+                    self.take_a, self.take_b, self.compare_dd, self.eq_preview, self.apply_btn, self.lower,
                     self.tap_btn, self.tap_label],
                    spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Row([
@@ -614,6 +627,7 @@ class Analyzer:
         self._hint_at = now
         fits = self.cmp.eq_fits(avg, self.spectrum.freqs) if listening else None
         self._fits = fits
+        self._update_apply()
         lines = self.cmp.hints(avg, self.spectrum.freqs, listening, self._insight, fits)
         if lines == self._hint_lines and not force:
             return
@@ -709,6 +723,34 @@ class Analyzer:
     def _set_preview(self) -> None:
         """The EQ preview choice changed: redraw at once."""
         self._update(self.eq_preview)
+        self._update_apply()
+
+    def _chosen_fit(self):
+        """The proposal chosen in EQ preview, if it is worth applying."""
+        kind = self.eq_preview.value
+        fit = (self._fits or {}).get(kind) if kind != "off" else None
+        return fit if fit is not None and fit.useful else None
+
+    def _update_apply(self) -> None:
+        """Enable the Apply button while the chosen proposal is worth applying."""
+        fit = self._chosen_fit()
+        sent = time.monotonic() < self._sent_until
+        disabled = self._on_apply is None or fit is None
+        text = "Sent to the editor" if sent else "Apply to editor"
+        if disabled != self.apply_btn.disabled or self.apply_btn.content.value != text:
+            self.apply_btn.disabled = disabled
+            self.apply_btn.content = ft.Text(text, no_wrap=True, size=13)
+            self._update(self.apply_btn)
+
+    def _apply_eq(self) -> None:
+        """Send the chosen proposal to the editor, which applies it on top of the
+        patch's EQ as one undoable step."""
+        fit = self._chosen_fit()
+        if fit is None or self._on_apply is None:
+            return
+        self._on_apply(fit.kind, fit.values)
+        self._sent_until = time.monotonic() + 3.0
+        self._update_apply()
 
     def _drag_divider(self, e) -> None:
         """Dragging the divider up gives the lower panel more height (and the spectrum less)."""
@@ -767,9 +809,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--card", default=None)
     parser.add_argument("--web", action="store_true", default=False)
     parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--apply-pipe", action="store_true", default=False)
     opts, _ = parser.parse_known_args(sys.argv[1:] if argv is None else argv)
     windows: list[Analyzer] = []
-    build = lambda page: windows.append(Analyzer(page, opts.card))   # noqa: E731
+    # Started by the main window: a proposal to apply goes back as an "EQ {json}" line
+    # on stdout.
+    pipe = ((lambda kind, values: print("EQ " + json.dumps({"kind": kind, "values": values}),
+                                        flush=True)) if opts.apply_pipe else None)
+    build = lambda page: windows.append(Analyzer(page, opts.card, pipe))   # noqa: E731
     if opts.web:       # a tab in the default browser instead of a window
         ft.run(main=build, view=ft.AppView.WEB_BROWSER, host="127.0.0.1", port=opts.port,
                no_cdn=True)
