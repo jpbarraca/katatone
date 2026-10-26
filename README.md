@@ -35,7 +35,7 @@ window or as a browser interface, for example on a Raspberry Pi next to the amp.
   note and spectrogram analysis, and tap tempo
   ([details](docs/analyzer.md))
 - **Tuner** — a guitar tuner for the amp's audio input ([details](docs/tuner.md))
-- **System settings** — edit the amp's global settings
+- **System settings** — edit the amp's global settings (read when you open the tab)
 - **MIDI controllers** — switch channels, toggle effects and drive wah / volume
   from pedals and keyboards ([details](docs/midi-controllers.md))
 - **Browser interface** — the same app in a browser, with a login

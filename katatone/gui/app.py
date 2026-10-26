@@ -136,6 +136,8 @@ class App:
         self.setlist: Setlist | None = None     # the liveset open on the SETLIST tab
         self._backup_offered = False    # asked about a backup before overwriting a slot
         self.system_ps: ParamSet | None = None
+        self._tab_index = 0             # the main tab on show (see _on_tab_change)
+        self._system_auto_done = False  # SYSTEM was read by itself since the tab opened / the amp connected
         self.lib = Library()
         # Popen of the confined Tone Exchange webview (see tonecentral_open).
         self.tc_proc: "subprocess.Popen | None" = None
@@ -203,6 +205,7 @@ class App:
         p.theme = ft.Theme(color_scheme_seed=theme.ACCENT)
         p.dark_theme = ft.Theme(color_scheme_seed=theme.ACCENT)
         p.on_keyboard_event = self._on_key
+        self._tab_index = 0
 
         self.status_text = ft.Text(self.last_status, color=theme.MUTED, size=13)
         self.progress = ft.ProgressBar(visible=False, height=4,
@@ -429,6 +432,7 @@ class App:
             dev = handshake(t)
             self.transport = t
             self.connected = True
+            self._system_auto_done = False
             self.model = slots.model_code(getattr(t, "identity_reply", None))
             t.on_unsolicited = self._on_unsolicited
             self._adopt_amp_patch(t)
@@ -499,6 +503,7 @@ class App:
         self._amp_ports = set()
         self.amp_patch = None
         self.system_ps = None  # belonged to this amp; re-read on next visit
+        self._system_auto_done = False
         self.set_live_ready(False)
         self.set_status(msg)
         self.refresh()
@@ -1204,6 +1209,7 @@ class App:
         midi_pane.refresh(self)
         setlist_pane.refresh(self)
         self.page.update()
+        self.maybe_load_system()        # an operation just ended: the SYSTEM tab may be waiting
 
     def _progress(self, done: int, total: int, verb: str) -> None:
         """Update the status line and progress bar while a read/write runs.
@@ -1449,18 +1455,35 @@ class App:
     # ------------------------------------------------------- system region
 
     def _on_tab_change(self, e: ft.ControlEvent) -> None:
-        """Read the SYSTEM settings the first time their tab is shown while
-        connected (later visits keep any unsaved edits; the tab's Read
-        button re-reads).
+        """Remember the tab on show and read the SYSTEM settings when their
+        tab opens empty while connected (later visits keep any unsaved edits;
+        the tab's Read button re-reads).
 
         Args:
             e: the tab-change event (``e.control.selected_index``).
         """
-        tabs = e.control
-        if (tabs.selected_index == TAB_ORDER.index(TAB_SYSTEM)
-                and self.connected and self.transport is not None
-                and self.system_ps is None and not self.busy):
-            self.load_system()
+        self._tab_index = e.control.selected_index
+        if self._tab_index == TAB_ORDER.index(TAB_SYSTEM):
+            self._system_auto_done = False      # a new visit may try again after a failure
+            self.maybe_load_system()
+
+    def maybe_load_system(self) -> None:
+        """Read the SYSTEM settings by themselves when their tab is showing and
+        still empty and the amp can be read now.
+
+        It is tried when the tab is opened and again whenever an operation ends
+        (a busy amp at the time, or a connection made while the tab was already
+        open, would otherwise leave it empty).  Not while connecting or reading
+        a patch, which use the wire.  One attempt per visit and connection: a
+        failed read is not retried in a loop (the tab's Read button does).
+        """
+        if (self._system_auto_done or self.system_ps is not None
+                or self._tab_index != TAB_ORDER.index(TAB_SYSTEM)
+                or not self.ui_attached or not self.connected or self.transport is None
+                or self.busy or self._connecting or self._read_pending):
+            return
+        self._system_auto_done = True
+        self.load_system()
 
     def load_system(self) -> None:
         """Read the amp's SYSTEM region into the editor in a background

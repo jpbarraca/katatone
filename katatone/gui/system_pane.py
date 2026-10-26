@@ -82,9 +82,10 @@ class _SystemPane:
         ps = self.app.system_ps
         self.content_box.controls = []
         if ps is None:
-            self.content_box.controls.append(
-                ft.Text("Press 'Read system' to load the SYSTEM region.",
-                        color=theme.MUTED))
+            text = ("Reading the SYSTEM settings... If nothing appears, press 'Read system'."
+                    if self.app.connected else
+                    "Connect the amp to read its SYSTEM settings.")
+            self.content_box.controls.append(ft.Text(text, color=theme.MUTED))
             _safe_update(self.root)
             return
         cards = []
