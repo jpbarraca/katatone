@@ -33,6 +33,7 @@ class Page(StubPage):
 @pytest.fixture
 def backend(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("KATATONE_NO_BLUETOOTH", "1")   # not the host's adapter
     monkeypatch.setattr(bc.BaseControl, "update", lambda self: None)
     return app_mod.App(start_midi=False)
 
