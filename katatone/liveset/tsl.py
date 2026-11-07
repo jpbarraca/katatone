@@ -189,6 +189,15 @@ class Tsl:
         self.memos.insert(index, copy.deepcopy(memo))
         return index
 
+    def replace(self, index: int, patch: dict[str, list[str]]) -> None:
+        """Overwrite the sound of patch ``index``; its memo stays.
+
+        Args:
+            index: 0-based patch position in the liveset.
+            patch: paramSet dict (block id -> list of hex byte strings).
+        """
+        self.patches[index] = {k: list(v) for k, v in patch.items()}
+
     def duplicate(self, index: int) -> int:
         """Copy patch ``index`` and insert the copy right after it.
 

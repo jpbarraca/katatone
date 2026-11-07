@@ -43,9 +43,39 @@ def test_appends_to_an_existing_liveset(tmp_path) -> None:
     dialog, target, new = _open(ed, shown)
     assert target.value == "Mine" and not target.disabled
     dialog.actions[1].on_click(None)
+    ed.app.patch_name = lambda: "Other"
     dialog, target, new = _open(ed, shown)
     dialog.actions[1].on_click(None)
     assert [(e.name, e.count) for e in ed.app.lib.list()] == [("Mine", 2)]
+
+
+def test_saving_a_patch_that_exists_asks_first(tmp_path) -> None:
+    ed, shown, status = _editor(tmp_path)
+    ed.app.lib.create("Mine")
+    ed.app.ps.set_block("PATCH%COM", ParamSet.encode_patch_name("Lead"))
+    _open(ed, shown)[0].actions[1].on_click(None)
+    ed.app.ps.set_block("PATCH%AMP", b"\x07")          # a different sound
+    _open(ed, shown)[0].actions[1].on_click(None)
+    ask = shown[-1]
+    assert "Overwrite" in ask.title.value and "Lead" in ask.content.value
+    ask.actions[0].on_click(None)                                  # Cancel
+    tsl = ed.app.lib.load("Mine")
+    assert len(tsl) == 1 and "PATCH%AMP" not in tsl.patches[0]
+
+
+def test_confirming_overwrites_the_patch_and_keeps_its_memo(tmp_path) -> None:
+    ed, shown, status = _editor(tmp_path)
+    tsl = ed.app.lib.create("Mine")
+    tsl.add(pe.Tsl.encode(ParamSet()), memo="my notes")
+    tsl.rename_patch(0, "Lead")
+    ed.app.lib.save(tsl)
+    ed.app.ps.set_block("PATCH%AMP", b"\x07")
+    _open(ed, shown)[0].actions[1].on_click(None)
+    shown[-1].actions[1].on_click(None)                            # Overwrite
+    tsl = ed.app.lib.load("Mine")
+    assert len(tsl) == 1 and tsl.memos[0] == "my notes"
+    assert tsl.patches[0]["PATCH%AMP"] == ["07"]
+    assert "Saved" in status[-1]
 
 
 def test_nothing_chosen_saves_nothing(tmp_path) -> None:

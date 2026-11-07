@@ -136,17 +136,13 @@ class PatchEditor:
         new = ft.TextField(label="Or a new liveset", hint_text="My liveset",
                            max_length=64, **pv.FIELD_STYLE)
 
-        def ok(e=None) -> None:
-            """Close the dialog and append the patch to the chosen liveset."""
-            app.page.pop_dialog()
-            new_name = (new.value or "").strip()
-            if not new_name and not target.value:
-                app.set_status("Choose a liveset or enter a new name.")
-                return
+        def store(tsl, index=None) -> None:
+            """Append the patch to ``tsl``, or overwrite patch ``index``."""
             try:
-                tsl = (app.lib.create(new_name) if new_name
-                       else app.lib.load(target.value))
-                tsl.add(Tsl.encode(app.ps))
+                if index is None:
+                    tsl.add(Tsl.encode(app.ps))
+                else:
+                    tsl.replace(index, Tsl.encode(app.ps))
                 app.lib.save(tsl)
             except (LivesetFull, LibraryFull, OSError, ValueError) as err:
                 app.set_status(f"Save to library failed: {err}")
@@ -156,6 +152,42 @@ class PatchEditor:
             app.set_status(f"Saved {app.patch_name() or 'patch'!r} to "
                            f"liveset {tsl.name!r}.")
             app.library_refresh()
+
+        def confirm_overwrite(tsl, index: int) -> None:
+            """Ask before replacing the same-named patch of ``tsl``."""
+            def yes(e=None) -> None:
+                app.page.pop_dialog()
+                store(tsl, index)
+            app.page.show_dialog(ft.AlertDialog(
+                title=ft.Text("Overwrite patch?"),
+                content=ft.Text(f"Liveset “{tsl.name}” already has a patch named "
+                                f"“{tsl.patch_name(index)}”. Overwrite it?"),
+                bgcolor=theme.PANEL_TOP,
+                actions=[pv.link_button("Cancel",
+                                        lambda e: app.page.pop_dialog(),
+                                        color=theme.MUTED),
+                         pv.button("Overwrite", ft.Icons.CHECK, yes, primary=True)]))
+
+        def ok(e=None) -> None:
+            """Close the dialog and save the patch to the chosen liveset,
+            after confirmation if that liveset has a patch of that name."""
+            app.page.pop_dialog()
+            new_name = (new.value or "").strip()
+            if not new_name and not target.value:
+                app.set_status("Choose a liveset or enter a new name.")
+                return
+            try:
+                tsl = (app.lib.create(new_name) if new_name
+                       else app.lib.load(target.value))
+            except (LibraryFull, OSError, ValueError) as err:
+                app.set_status(f"Save to library failed: {err}")
+                return
+            name = app.patch_name()
+            same = [i for i in range(len(tsl)) if tsl.patch_name(i) == name]
+            if name and same:
+                confirm_overwrite(tsl, same[0])
+            else:
+                store(tsl)
 
         new.on_submit = ok
         app.page.show_dialog(ft.AlertDialog(
