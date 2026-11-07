@@ -129,3 +129,18 @@ def test_the_empty_tab_says_what_it_waits_for(app) -> None:
     app.connected = False
     app.system.refresh()
     assert app.system.content_box.controls[0].value == "Connect the amp to read its SYSTEM settings."
+
+
+def test_the_system_read_waits_for_other_reads_on_the_wire(app, monkeypatch) -> None:
+    import threading
+    import time
+    from katatone.amp import read
+    monkeypatch.setattr(read, "read_region", lambda t, name, progress=None: ParamSet())
+    done = threading.Event()
+    with app._read_lock:                                     # e.g. the slot names are being read
+        worker = threading.Thread(
+            target=lambda: (app._system_thread("load"), done.set()), daemon=True)
+        worker.start()
+        time.sleep(0.2)
+        assert not done.is_set() and app.system_ps is None   # held back, wire untouched
+    assert done.wait(2) and app.system_ps is not None

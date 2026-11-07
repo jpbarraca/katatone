@@ -1577,22 +1577,23 @@ class App:
         """
         from ..amp.read import read_region
         from ..amp.write import write_system
-        self.set_busy(True, f"{'Reading' if op == 'load' else 'Writing'} system…")
-        self.busy_writing = op == "save"
-        try:
-            if op == "load":
-                self.system_ps = read_region(
-                    self.transport, "SYSTEM",
-                    progress=lambda d, tot: self._progress(d, tot, "Reading system"))
-                self.set_status("Read SYSTEM region.")
-            else:
-                write_system(self.transport, self.system_ps)
-                self.set_status("Wrote SYSTEM region.")
-        except Exception as e:                       # noqa: BLE001
-            self.set_status(f"System {'read' if op == 'load' else 'write'} failed: {e}")
-        finally:
-            self.busy_writing = False
-            self.refresh()
+        with self._read_lock:               # not while a slot or the slot names are read
+            self.set_busy(True, f"{'Reading' if op == 'load' else 'Writing'} system…")
+            self.busy_writing = op == "save"
+            try:
+                if op == "load":
+                    self.system_ps = read_region(
+                        self.transport, "SYSTEM",
+                        progress=lambda d, tot: self._progress(d, tot, "Reading system"))
+                    self.set_status("Read SYSTEM region.")
+                else:
+                    write_system(self.transport, self.system_ps)
+                    self.set_status("Wrote SYSTEM region.")
+            except Exception as e:                   # noqa: BLE001
+                self.set_status(f"System {'read' if op == 'load' else 'write'} failed: {e}")
+            finally:
+                self.busy_writing = False
+                self.refresh()
 
     # ------------------------------------------------------- library / tone central
 
