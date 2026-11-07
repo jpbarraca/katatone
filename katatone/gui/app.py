@@ -132,6 +132,7 @@ class App:
         self.ps = ParamSet()            # working patch
         self.slot_names: dict[int, str] = {}    # last known patch name per slot
         self.slot_cache: dict[int, ParamSet] = {}   # each slot as last read or written
+        self.muted = False              # the amp's preview is muted (the mute button)
         self.dirty = False
         self.history = EditHistory()    # undo / redo of the edits to `ps`
         self._group_ids = itertools.count()     # tells grouped edits (an applied EQ) apart
@@ -437,6 +438,7 @@ class App:
             self._system_auto_done = False
             self.model = slots.model_code(getattr(t, "identity_reply", None))
             self._forget_slots()            # they belonged to the previous amp
+            self.muted = False
             t.on_unsolicited = self._on_unsolicited
             self._adopt_amp_patch(t)
             if self.patch_number not in [x.index for x in self.slots()]:
@@ -506,6 +508,7 @@ class App:
         self.transport = None
         self._amp_ports = set()
         self.amp_patch = None
+        self.muted = False
         self.system_ps = None  # belonged to this amp; re-read on next visit
         self._system_auto_done = False
         self.set_live_ready(False)
@@ -1142,6 +1145,8 @@ class App:
         from ..amp.write import set_preview_mute
         try:
             set_preview_mute(self.transport, mute)
+            self.muted = mute
+            statusbar.refresh_mute(self)
             self.set_status(f"Preview {'muted' if mute else 'unmuted'}.")
         except Exception as e:                       # noqa: BLE001
             self.set_status(f"Mute failed: {e}")

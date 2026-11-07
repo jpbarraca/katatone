@@ -249,3 +249,25 @@ def test_dialog_leaves_avahi_alone_if_unchanged_or_missing(monkeypatch) -> None:
     wifi_dialog.open_dialog(app, w)
     sw = by_label(app.page.dialogs[0])["Reachable as <host name>.local (avahi)"]
     assert sw.disabled
+
+
+def test_one_mute_button_that_stays_pressed_while_muted() -> None:
+    from katatone.gui import statusbar, theme
+    app = types.SimpleNamespace(wifi_enabled=False, page=Page(), amp_port=None,
+                                auto_connect=True, muted=False, connected=True,
+                                ui_attached=False, calls=[])
+    app.set_mute = app.calls.append
+    texts = _texts(statusbar.build(app))
+    assert "Preview mute" in texts and "Unmute" not in texts
+    button = app.sb_mute
+    assert button.style.bgcolor == theme.TAB_ACTIVE
+    button.on_click(None)
+    assert app.calls == [True]                      # unmuted: the press mutes
+    app.muted = True
+    statusbar.refresh_mute(app)
+    assert button.style.bgcolor == theme.DANGER     # pressed, in another colour
+    button.on_click(None)
+    assert app.calls == [True, False]               # muted: the press unmutes
+    app.connected = False
+    statusbar.refresh_mute(app)
+    assert button.style.bgcolor == theme.TAB_ACTIVE

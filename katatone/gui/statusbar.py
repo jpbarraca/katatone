@@ -119,9 +119,8 @@ def build(app: App) -> ft.Control:
                          lambda e: None if web else app.open_tuner(),
                          url=tool_url("tuner"))
     sb_mute = pv.button("Preview mute", ft.Icons.VOLUME_OFF,
-                      lambda e: app.set_mute(True))
-    sb_unmute = pv.button("Unmute", ft.Icons.VOLUME_UP,
-                        lambda e: app.set_mute(False))
+                        lambda e: app.set_mute(not app.muted))
+    _show_mute(sb_mute, False)
 
     # Network setup is opt-in (--wifi): only for a device that manages its own network.
     sb_wifi = (pv.button("Wi-Fi", ft.Icons.WIFI, lambda e: _on_wifi(app))
@@ -135,7 +134,6 @@ def build(app: App) -> ft.Control:
     app.sb_midi = sb_midi
     app._sb_midi_lit = False
     app.sb_mute = sb_mute
-    app.sb_unmute = sb_unmute
 
     return ft.Container(
         content=ft.Row([
@@ -147,7 +145,7 @@ def build(app: App) -> ft.Control:
             ft.Row([ft.Text("MIDI", size=10, color=theme.MUTED), sb_midi],
                    spacing=4, tight=True),
             *([sb_wifi] if sb_wifi else []),
-            sb_analyzer, sb_tuner, sb_mute, sb_unmute,
+            sb_analyzer, sb_tuner, sb_mute,
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=12),
         gradient=ft.LinearGradient(begin=ft.Alignment.TOP_CENTER,
                                    end=ft.Alignment.BOTTOM_CENTER,
@@ -157,6 +155,27 @@ def build(app: App) -> ft.Control:
                                       bottom_left=0, bottom_right=0),
         padding=ft.Padding(left=16, right=16, top=10, bottom=10),
     )
+
+
+def _show_mute(button: ft.FilledButton, muted: bool) -> None:
+    """Give the mute button its pressed look (red) while the preview is muted."""
+    button.style.bgcolor = theme.DANGER if muted else theme.TAB_ACTIVE
+    button.tooltip = ("Preview muted: press to unmute" if muted
+                      else "Mute the amp's preview")
+
+
+def refresh_mute(app: App) -> None:
+    """Show whether the amp's preview is muted on the mute button.
+
+    Args:
+        app: the application.
+    """
+    button = getattr(app, "sb_mute", None)
+    if button is None:
+        return
+    _show_mute(button, app.muted and app.connected)
+    if app.ui_attached:
+        button.update()
 
 
 def _on_wifi(app: App) -> None:
@@ -191,6 +210,7 @@ def refresh(app: App) -> None:
                               + ("  ● unsaved" if app.dirty else ""))
     else:
         app.sb_patch.value = "not connected"
+    refresh_mute(app)
 
 
 def refresh_ports(app: App) -> None:
