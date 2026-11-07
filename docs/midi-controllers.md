@@ -12,6 +12,8 @@ Any class-compliant **USB MIDI** controller can control the amp from the
      **switch bank**, **next / previous channel**;
    - **Next / previous setlist patch**: plays the next or previous patch of the
      open [setlist](setlist.md) through the amp's edit buffer (no slot is written);
+   - **Metronome**: start / stop, start, stop, tap tempo, tempo up or down by a
+     number of BPM you choose (see [Metronome](metronome.md); it needs no amp);
    - **Effect on / off** (booster, mod, FX, delay, delay 2, reverb,
      send/return, solo, noise suppressor, pedal FX), toggled, forced on or off,
      or on while held;
@@ -49,6 +51,7 @@ set to that control (as if Learn had caught it), with the likely action preselec
 | Wah / expression pedal | CC 11 moves the pedal FX (wah, bend or 95E) |
 | Volume pedal | CC 7 sets the amp volume |
 | Setlist switches | CC 80 next, CC 81 previous patch of the open [setlist](setlist.md) |
+| Metronome switches | CC 80 start / stop, CC 81 tap tempo, CC 82 tempo down, CC 83 tempo up ([metronome](metronome.md)) |
 
 The numbers are the usual ones for such pedals (CC 80 to 83 are the standard
 "general purpose" controllers that foot controllers often send; 11 is expression and

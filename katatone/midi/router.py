@@ -25,7 +25,7 @@ from ..amp.live import LiveWriter
 from .events import (ControlChange, MidiEvent, NoteOn, ProgramChange, describe)
 from .mapping import (EDIT_REGION, PEDAL_TYPE, Action, AmpNative, BankAction, ChannelFromPc,
                       ChannelSelect, ChannelStep, EffectAction, ExpressionAction,
-                      SetlistStep,
+                      SetlistStep, MetronomeAction,
                       Mapping, Profile, UnknownAction, effect_param, find_param,
                       pedal_fx_type, resolve_expression, scale_range)
 
@@ -64,6 +64,7 @@ class RouterHost(Protocol):
     def show_param(self, block: str, p_index: int, value: int) -> None: ...
     def status(self, msg: str) -> None: ...
     def setlist_step(self, op: str) -> None: ...
+    def metronome_op(self, op: str, step: int) -> None: ...
 
 
 class Router:
@@ -359,6 +360,9 @@ class Router:
             if not self._need_amp():
                 return
             self._channel(a, ev)
+            return
+        if isinstance(a, MetronomeAction):          # the sound card only: no amp needed
+            self.host.metronome_op(a.op, a.step)
             return
         if isinstance(a, SetlistStep):
             if self._need_amp():

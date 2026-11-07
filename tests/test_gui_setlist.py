@@ -102,4 +102,4 @@ def test_clicking_a_list_entry_plays_that_patch(app) -> None:
 
 
 def test_the_tab_exists_in_order(app) -> None:
-    assert app_mod.TAB_ORDER[-1] == "SETLIST"
+    assert app_mod.TAB_ORDER[-2:] == ("SETLIST", "METRONOME")

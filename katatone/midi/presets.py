@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .mapping import (ChannelFromPc, ChannelStep, EffectAction, ExprTarget,
-                      ExpressionAction, Mapping, Profile, SetlistStep, Trigger)
+                      ExpressionAction, Mapping, MetronomeAction, Profile, SetlistStep,
+                      Trigger)
 from .store import ProfileStore
 
 # CC 80-83 are the "general purpose" controllers of the MIDI standard, which foot
@@ -59,6 +60,13 @@ def _setlist_switches() -> list[Mapping]:
             _switch(81, SetlistStep("prev"), "Previous setlist patch")]
 
 
+def _metronome_switches() -> list[Mapping]:
+    return [_switch(80, MetronomeAction("toggle"), "Metronome start / stop"),
+            _switch(81, MetronomeAction("tap"), "Metronome tap tempo"),
+            _switch(82, MetronomeAction("tempo_down"), "Metronome tempo down"),
+            _switch(83, MetronomeAction("tempo_up"), "Metronome tempo up")]
+
+
 @dataclass(frozen=True)
 class Preset:
     """A named set of mappings to start a profile from."""
@@ -89,6 +97,9 @@ PRESETS: tuple[Preset, ...] = (
     Preset("Setlist switches",
            "Two footswitches sending CC 80 and CC 81: next and previous patch of the "
            "open setlist.", _setlist_switches),
+    Preset("Metronome switches",
+           "Four footswitches sending CC 80 to 83: metronome start / stop, tap tempo, "
+           "tempo down and up.", _metronome_switches),
 )
 
 

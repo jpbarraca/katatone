@@ -14,7 +14,7 @@ from ..midi import mapping as mp
 from ..midi.learn import LearnResult
 from ..midi.mapping import (AmpNative, BankAction, ChannelFromPc, ChannelSelect, ChannelStep,
                             EffectAction, ExprTarget, ExpressionAction, Mapping,
-                            SetlistStep, Trigger)
+                            MetronomeAction, SetlistStep, Trigger)
 from ..midi.router import AMP_NATIVE_ENABLED
 from . import model, params_view as pv, theme
 
@@ -30,6 +30,7 @@ ACTION_LABELS = {"channel_select": "Select a channel",
                  "channel_from_pc": "Channel from program number",
                  "bank": "Switch bank", "channel_step": "Next / previous channel",
                  "setlist_step": "Next / previous setlist patch",
+                 "metronome": "Metronome (start, stop, tap, tempo)",
                  "effect": "Effect on / off", "expression": "Expression (continuous)",
                  "amp_native": "Forward to the amp's own MIDI map"}
 BANK_OPS = {"toggle": "Toggle A/B", "next": "Next bank", "prev": "Previous bank"}
@@ -297,6 +298,7 @@ class MappingDialog:
             "channel_select": self._new_channel_select,
             "channel_from_pc": ChannelFromPc, "bank": BankAction,
             "channel_step": ChannelStep, "setlist_step": SetlistStep,
+            "metronome": MetronomeAction,
             "effect": EffectAction,
             "expression": ExpressionAction, "amp_native": AmpNative,
         }[kind]()
@@ -321,6 +323,15 @@ class MappingDialog:
             box.append(ft.Text("Plays the patch through the amp's edit buffer; open the setlist "
                                "on the SETLIST tab first. No slot is written.",
                                size=11, color=theme.MUTED))
+        elif isinstance(a, MetronomeAction):
+            self._metronome_step = ft.TextField(
+                label="BPM per step", width=130, value=str(a.step),
+                input_filter=ft.NumbersOnlyInputFilter(), on_change=self._metronome_step_changed,
+                **pv.FIELD_STYLE)
+            box.append(ft.Row([_dropdown("Do", mp.METRONOME_OPS, a.op, lambda k: setattr(a, "op", k)),
+                               self._metronome_step], spacing=10, wrap=True))
+            box.append(ft.Text("Controls the METRONOME tab (it needs no amp). The step is how much "
+                               "Tempo up / down change the tempo.", size=11, color=theme.MUTED))
         elif isinstance(a, EffectAction):
             effects = {k: d.label for k, d in mp.EFFECTS.items()}
             box.append(ft.Row([
@@ -334,6 +345,13 @@ class MappingDialog:
         elif isinstance(a, AmpNative):
             box += self._amp_native_controls(a)
         self.action_box.controls = box
+
+    def _metronome_step_changed(self, e) -> None:
+        """Keep the draft's step in 1..50 as the field is edited."""
+        ft.context.disable_auto_update()
+        a = self.draft.action
+        if isinstance(a, MetronomeAction) and e.control.value.strip().isdigit():
+            a.step = max(1, min(50, int(e.control.value)))
 
     def _amp_native_controls(self, a: AmpNative) -> list[ft.Control]:
         """Kind and number for a message forwarded to the amp's own MIDI map."""

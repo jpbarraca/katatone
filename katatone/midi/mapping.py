@@ -66,6 +66,10 @@ EFFECTS: dict[str, EffectDef] = {
 
 EFFECT_OPS = ("toggle", "on", "off", "momentary")
 
+# What a metronome mapping can do, and how the mapping dialog words it.
+METRONOME_OPS = {"toggle": "Start / stop", "start": "Start", "stop": "Stop", "tap": "Tap tempo",
+                 "tempo_up": "Tempo up", "tempo_down": "Tempo down"}
+
 # PEDALFX_COM_TYPE value -> the parameter holding that pedal's position.
 PEDAL_TYPE = EffectDef("PEDALFX_COM", "PEDALFX_COM_TYPE", "Pedal FX type")
 PEDAL_FX_POSITION_PARAMS: dict[int, EffectDef] = {
@@ -372,6 +376,36 @@ class SetlistStep:
 
 
 @dataclass
+class MetronomeAction:
+    """Control the metronome of the METRONOME tab: start, stop, tap the tempo or change it.
+
+    ``step`` is how many BPM ``tempo_up`` and ``tempo_down`` change it by.  It needs no amp.
+    """
+
+    type: ClassVar[str] = "metronome"
+    op: str = "toggle"
+    step: int = 5
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialise for the profile JSON."""
+        return {"type": self.type, "op": self.op, "step": self.step}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "MetronomeAction":
+        """Rebuild from `to_dict` output."""
+        op = d["op"]
+        if op not in METRONOME_OPS:
+            raise ValueError(f"unknown metronome op {op!r}")
+        return cls(op=op, step=max(1, min(50, int(d.get("step", 5)))))
+
+    def summary(self, slot_name=str) -> str:
+        """Text for the mappings table."""
+        if self.op in ("tempo_up", "tempo_down"):
+            return f"Metronome {METRONOME_OPS[self.op].lower()} ({self.step} BPM)"
+        return f"Metronome {METRONOME_OPS[self.op].lower()}"
+
+
+@dataclass
 class EffectAction:
     """Switch an effect on/off (see `EFFECTS`)."""
 
@@ -478,11 +512,11 @@ class UnknownAction:
 
 
 Action = Union[ChannelSelect, ChannelFromPc, BankAction, ChannelStep, SetlistStep,
-               EffectAction, ExpressionAction, AmpNative, UnknownAction]
+               MetronomeAction, EffectAction, ExpressionAction, AmpNative, UnknownAction]
 
 ACTION_TYPES: dict[str, type] = {c.type: c for c in (
-    ChannelSelect, ChannelFromPc, BankAction, ChannelStep, SetlistStep, EffectAction,
-    ExpressionAction, AmpNative)}
+    ChannelSelect, ChannelFromPc, BankAction, ChannelStep, SetlistStep, MetronomeAction,
+    EffectAction, ExpressionAction, AmpNative)}
 
 
 def action_from_dict(d: dict[str, Any]) -> Action:

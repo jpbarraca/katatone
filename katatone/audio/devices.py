@@ -1,4 +1,4 @@
-"""Sound-card input devices, as listed by ``arecord -L``."""
+"""Sound-card devices, as listed by ``arecord -L`` (inputs) and ``aplay -L`` (outputs)."""
 from __future__ import annotations
 
 import shutil
@@ -8,10 +8,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Device:
-    """One capture device.
+    """One capture or playback device.
 
     Attributes:
-        name: the ALSA device name to pass to ``arecord -D``.
+        name: the ALSA device name to pass to ``arecord -D`` / ``aplay -D``.
         label: a human-readable description for the dropdown.
     """
 
@@ -49,16 +49,26 @@ def parse_listing(text: str) -> list[Device]:
     return devices
 
 
-def list_input_devices() -> list[Device]:
-    """Return the capture devices, or an empty list without ``arecord``."""
-    if shutil.which("arecord") is None:
+def _list(tool: str) -> list[Device]:
+    """The devices ``tool -L`` lists, or an empty list without the tool."""
+    if shutil.which(tool) is None:
         return []
     try:
-        out = subprocess.run(["arecord", "-L"], capture_output=True, text=True,
+        out = subprocess.run([tool, "-L"], capture_output=True, text=True,
                              timeout=10).stdout
     except (OSError, subprocess.SubprocessError):
         return []
     return parse_listing(out)
+
+
+def list_input_devices() -> list[Device]:
+    """Return the capture devices, or an empty list without ``arecord``."""
+    return _list("arecord")
+
+
+def list_output_devices() -> list[Device]:
+    """Return the playback devices, or an empty list without ``aplay``."""
+    return _list("aplay")
 
 
 def preferred(devices: list[Device], card: str | None) -> Device | None:

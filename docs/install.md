@@ -24,7 +24,8 @@ The command line (`katatone`) needs neither.
 
 ## System packages
 
-- The Analyzer and the Tuner need `arecord` (package `alsa-utils`).
+- The Analyzer and the Tuner need `arecord`, and the Metronome needs `aplay` (both in the
+  package `alsa-utils`).
 - Tone Central's desktop window (Library tab) needs WebKitGTK and PyGObject from
   your distribution (`webkit2gtk-4.1-0 python3-gi gir1.2-webkit2-4.1` on
   Debian/Ubuntu, `webkit2gtk4.1 python3-gobject` on Fedora).  In the browser

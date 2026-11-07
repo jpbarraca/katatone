@@ -70,6 +70,12 @@ def test_setlist_switches() -> None:
     assert fired(prof, ControlChange(0, 81, 127)) == [SetlistStep("prev")]
 
 
+def test_metronome_switches() -> None:
+    prof = by_name("Metronome switches").profile()
+    assert [fired(prof, ControlChange(0, cc, 127))[0].op for cc in (80, 81, 82, 83)] == \
+        ["toggle", "tap", "tempo_down", "tempo_up"]
+
+
 def test_create_stores_the_profile_and_picks_a_free_name(tmp_path) -> None:
     store = ProfileStore(tmp_path)
     first = presets.create(store, by_name("Volume pedal"))

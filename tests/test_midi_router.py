@@ -12,8 +12,8 @@ from katatone.midi import mapping as mp
 from katatone.midi.events import ControlChange, NoteOff, NoteOn, ProgramChange
 from katatone.midi.mapping import (BankAction, ChannelFromPc, ChannelSelect,
                                    ChannelStep, EffectAction, ExprTarget,
-                                   ExpressionAction, Mapping, Profile, SetlistStep,
-                                   Trigger)
+                                   ExpressionAction, Mapping, MetronomeAction, Profile,
+                                   SetlistStep, Trigger, UnknownAction, action_from_dict)
 from katatone.midi.parser import MidiParser
 from katatone.midi.router import Router
 from katatone.model.paramset import ParamSet
@@ -55,6 +55,7 @@ class FakeHost:
         self.shown: list[tuple[str, int, int]] = []
         self.statuses: list[str] = []
         self.setlist_steps: list[str] = []
+        self.metronome_ops: list[tuple[str, int]] = []
 
     def get_transport(self):
         return self.transport
@@ -76,6 +77,9 @@ class FakeHost:
 
     def setlist_step(self, op: str) -> None:
         self.setlist_steps.append(op)
+
+    def metronome_op(self, op: str, step: int) -> None:
+        self.metronome_ops.append((op, step))
 
 
 def trig(**kw) -> Trigger:
@@ -210,6 +214,31 @@ def test_setlist_step_survives_the_profile_file() -> None:
     m = mapping(trig(kind="note", number=60), SetlistStep("prev"))
     again = Mapping.from_dict(m.to_dict())
     assert again.action == SetlistStep("prev") and again.action.summary() == "Setlist prev"
+
+
+def test_metronome_actions_reach_the_host_without_the_amp(host) -> None:
+    host.connected = False
+    r = make_router(host,
+                    mapping(trig(kind="note", number=60), MetronomeAction("toggle")),
+                    mapping(trig(kind="note", number=62), MetronomeAction("tempo_up", 10)))
+    try:
+        send(r, NoteOn(0, 60, 100), NoteOff(0, 60), NoteOn(0, 62, 100), NoteOn(0, 60, 100))
+        assert host.metronome_ops == [("toggle", 5), ("tempo_up", 10), ("toggle", 5)]
+        assert host.statuses == [] and host.transport.writes == []
+    finally:
+        r.stop()
+
+
+def test_metronome_action_survives_the_profile_file_and_rejects_a_bad_op() -> None:
+    m = mapping(trig(kind="cc", number=81), MetronomeAction("tempo_down", 3))
+    again = Mapping.from_dict(m.to_dict())
+    assert again.action == MetronomeAction("tempo_down", 3)
+    assert again.action.summary() == "Metronome tempo down (3 BPM)"
+    assert MetronomeAction("tap").summary() == "Metronome tap tempo"
+    bad = Mapping.from_dict({**m.to_dict(), "action": {"type": "metronome", "op": "explode"}})
+    assert isinstance(bad.action, UnknownAction)
+    clamped = action_from_dict({"type": "metronome", "op": "tempo_up", "step": 900})
+    assert clamped == MetronomeAction("tempo_up", 50)
 
 
 def test_bank_toggle_and_step(host) -> None:

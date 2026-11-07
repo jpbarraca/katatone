@@ -12,7 +12,7 @@ finish-args:
   # Not fallback-x11: Flet decides it runs on a headless server when DISPLAY is unset, which
   # it is in a Wayland session unless the X11 socket is given too.
   - --socket=x11
-  # The amp's MIDI ports are /dev/snd/midiC*D* and the sound card is read with arecord:
+  # The amp's MIDI ports are /dev/snd/midiC*D* and the sound card is used with arecord and aplay:
   # both need the sound devices.
   - --device=all
   - --socket=pulseaudio
@@ -27,7 +27,7 @@ finish-args:
   - --env=ALSA_CONFIG_PATH=/app/share/katatone/alsa.conf
 
 modules:
-  # arecord, used by the Tuner and the Analyzer to read the sound card.
+  # arecord and aplay: the Tuner and the Analyzer read the sound card, the Metronome plays to it.
   - name: alsa-utils
     buildsystem: autotools
     config-opts:

@@ -36,15 +36,16 @@ from . import compare_dialog, params_view as pv, theme
 from .history import EditHistory
 from .model import display_label
 from .headless import HeadlessPage
-from . import (library_pane, login, midi_pane, patch_editor, setlist_pane, statusbar,
-               system_pane)
+from . import (library_pane, login, metronome_pane, midi_pane, patch_editor, setlist_pane,
+               statusbar, system_pane)
 
 TAB_PATCH = "PATCH"
 TAB_SYSTEM = "SYSTEM"
 TAB_MIDI = midi_pane.TAB_MIDI
 TAB_LIBRARY = "LIBRARY"
 TAB_SETLIST = setlist_pane.TAB_SETLIST
-TAB_ORDER = (TAB_PATCH, TAB_SYSTEM, TAB_MIDI, TAB_LIBRARY, TAB_SETLIST)
+TAB_METRONOME = metronome_pane.TAB_METRONOME
+TAB_ORDER = (TAB_PATCH, TAB_SYSTEM, TAB_MIDI, TAB_LIBRARY, TAB_SETLIST, TAB_METRONOME)
 
 log = logging.getLogger("katatone.gui")
 
@@ -229,6 +230,7 @@ class App:
                         ft.Tab(label=TAB_MIDI, icon=ft.Icons.PIANO),
                         ft.Tab(label=TAB_LIBRARY, icon=ft.Icons.LIBRARY_MUSIC),
                         ft.Tab(label=TAB_SETLIST, icon=ft.Icons.PLAYLIST_PLAY),
+                        ft.Tab(label=TAB_METRONOME, icon=ft.Icons.MORE_TIME),
                     ], indicator_color=theme.ACCENT, label_color=theme.ACCENT,
                         unselected_label_color=theme.MUTED,
                         divider_color=theme.PANEL_EDGE,
@@ -242,6 +244,7 @@ class App:
                         midi_pane.build(self),
                         library_pane.build(self),
                         setlist_pane.build(self),
+                        metronome_pane.build(self),
                     ], expand=True),
                 ],
             ),
@@ -832,6 +835,7 @@ class App:
         self.stop_auto_connect()
         self.stop_midi()
         self.stop_analyzer()
+        self.stop_metronome()
         t, self.transport = self.transport, None
         self.connected = False
         if t is not None:
@@ -1348,6 +1352,18 @@ class App:
                         "Next plays the first.")
         setlist_pane.refresh(self)
         self.page.update()
+
+    def metronome_op(self, op: str, step: int) -> None:
+        """Start, stop, tap or change the tempo of the metronome (from a MIDI mapping).
+
+        Args:
+            op: one of :data:`katatone.midi.mapping.METRONOME_OPS`.
+            step: BPM added or taken away by ``tempo_up`` / ``tempo_down``.
+        """
+        pane = getattr(self, "metronome_view", None)
+        if pane is None:
+            return self.set_status("The metronome is not available here.")
+        pane.op(op, step)
 
     def setlist_step(self, op: str) -> None:
         """Play the next or previous patch of the setlist (also from a MIDI
@@ -1924,6 +1940,12 @@ class App:
             return None
         self.set_status(f"{title} window opened.")
         return proc
+
+    def stop_metronome(self) -> None:
+        """Stop the metronome's click if it is playing."""
+        pane = getattr(self, "metronome_view", None)
+        if pane is not None:
+            pane.stop()
 
     def stop_analyzer(self) -> None:
         """Close the analyzer and the tuner windows if they are open."""

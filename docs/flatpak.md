@@ -1,7 +1,7 @@
 # Flatpak
 
 KataTone's desktop GUI can be installed as a Flatpak: the application, its Python
-packages, the Flet desktop client, `arecord` and `zenity` are bundled, so nothing is
+packages, the Flet desktop client, `arecord`, `aplay` and `zenity` are bundled, so nothing is
 downloaded when it starts.  The amp is used **over USB**.  Bluetooth (the amp's BLE-MIDI
 adapter and Bluetooth MIDI controllers) and the web server are not part of this package.
 
