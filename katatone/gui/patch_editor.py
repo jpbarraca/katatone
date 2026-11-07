@@ -91,7 +91,7 @@ class PatchEditor:
         self.dirty_label = ft.Text("", size=12, color=theme.DANGER)
         buttons = ft.Column([
             ft.Row([_button("Read", ft.Icons.DOWNLOAD,
-                            lambda e: self.app.read_patch(n())),
+                            lambda e: self.app.read_patch(n(), force=True)),
                     _button("Write", ft.Icons.UPLOAD,
                             lambda e: self.app.write_patch(), primary=True)],
                    spacing=6),
@@ -169,11 +169,11 @@ class PatchEditor:
 
     def _patch_label(self, slot) -> str:
         """Display name for a slot row: the editor's patch name when this
-        slot holds the selected patch number, the slot's long name
-        otherwise."""
+        slot holds the selected patch number, else the last name seen in the
+        slot, else the slot's long name."""
         if slot.index == self.app.patch_number:
             return self.app.patch_name() or slot.long
-        return slot.long
+        return self.app.slot_names.get(slot.index) or slot.long
 
     def _on_pick(self, n: int) -> None:
         """Slot button handler: online, read the slot's patch from the amp without
@@ -271,6 +271,11 @@ class PatchEditor:
         """The slot rows: the one shown in the editor is highlighted, and the one
         the amp plays has its label filled."""
         playing = self.app.amp_patch if self.app.connected else None
+        # Remember the name of the slot on show, so that it stays on its row
+        # once another slot is picked (unsaved edits are not the slot's name).
+        name = self.app.patch_name()
+        if name and not self.app.dirty:
+            self.app.slot_names[self.app.patch_number] = name
         self.list_box.controls = [
             self._patch_button(slot, slot.index == self.app.patch_number,
                                slot.index == playing)

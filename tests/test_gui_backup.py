@@ -26,7 +26,7 @@ def app(monkeypatch, tmp_path):
     a.log = []
     monkeypatch.setattr(bk, "read_backup", lambda t, progress=None: a.log.append("read") or make_backup())
     monkeypatch.setattr(bk, "write_backup", lambda t, b, progress=None: a.log.append("write"))
-    monkeypatch.setattr(a, "read_patch", lambda n: a.log.append(("reread", n)))
+    monkeypatch.setattr(a, "read_patch", lambda n, force=False: a.log.append(("reread", n)))
     return a
 
 

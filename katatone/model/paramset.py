@@ -11,6 +11,12 @@ class ParamSet:
         """Create an empty ParamSet; blocks are added with `set_block`."""
         self.data: dict[str, bytes] = {}
 
+    def copy(self) -> "ParamSet":
+        """An independent copy (blocks are immutable bytes, so a shallow one)."""
+        other = ParamSet()
+        other.data = dict(self.data)
+        return other
+
     # -- block access ---------------------------------------------------
 
     @staticmethod

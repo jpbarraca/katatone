@@ -130,6 +130,8 @@ class App:
         self.connected = False
         self.patch_number = 0
         self.ps = ParamSet()            # working patch
+        self.slot_names: dict[int, str] = {}    # last known patch name per slot
+        self.slot_cache: dict[int, ParamSet] = {}   # each slot as last read or written
         self.dirty = False
         self.history = EditHistory()    # undo / redo of the edits to `ps`
         self._group_ids = itertools.count()     # tells grouped edits (an applied EQ) apart
@@ -434,6 +436,7 @@ class App:
             self.connected = True
             self._system_auto_done = False
             self.model = slots.model_code(getattr(t, "identity_reply", None))
+            self._forget_slots()            # they belonged to the previous amp
             t.on_unsolicited = self._on_unsolicited
             self._adopt_amp_patch(t)
             if self.patch_number not in [x.index for x in self.slots()]:
@@ -453,6 +456,7 @@ class App:
                 import time
                 time.sleep(0.5)  # let the amp settle after editor-mode DT1
                 self.read_patch(self.patch_number)
+            self.page.run_thread(self._read_slot_names, t)
         except Exception as e:                       # noqa: BLE001
             if t is not None:
                 try:
@@ -595,18 +599,63 @@ class App:
             return False
         return True
 
-    def read_patch(self, n: int) -> None:
+    def read_patch(self, n: int, force: bool = False) -> None:
         """Read amp slot ``n`` into the editor in a background thread.
 
         Supersedes any resync still pending or in flight.
 
         Args:
             n: the amp slot index (0-based).
+            force: read the amp even if the slot was read or written before
+                (the Read button); otherwise the remembered patch is shown.
         """
         if not self._require_connected():
             return
         gen = self._new_read_request()
-        self.page.run_thread(self._read_thread, n, gen, False)
+        self.page.run_thread(self._read_thread, n, gen, False, None, force)
+
+    def _forget_slots(self, n: int | None = None) -> None:
+        """Drop what is remembered of amp slot ``n`` (all slots if None): the
+        slot changed behind the cache's back.
+
+        Args:
+            n: the amp slot index (0-based), or None for every slot.
+        """
+        if n is None:
+            self.slot_names.clear()
+            self.slot_cache.clear()
+        else:
+            self.slot_names.pop(n, None)
+            self.slot_cache.pop(n, None)
+
+    def _read_slot_names(self, t) -> None:
+        """Fill ``slot_names`` with the name stored in each amp slot, so the
+        slot list shows them without reading every patch.
+
+        Runs after connecting, between the slot reads (they hold the read
+        lock); stops quietly if the connection goes away or a read fails.
+
+        Args:
+            t: the transport the names are read from.
+        """
+        from ..amp.read import read_patch_name
+        got = False
+        for s in self.slots():
+            if s.index in self.slot_names:
+                continue                    # already seen in a full read
+            with self._read_lock:
+                if not self.connected or self.transport is not t:
+                    return
+                try:
+                    name = read_patch_name(t, s.index)
+                except Exception as e:               # noqa: BLE001
+                    log.warning("could not read the name of %s: %s", s.short, e)
+                    break
+            if name:
+                self.slot_names.setdefault(s.index, name)
+                got = True
+        if got and self.ui_attached:
+            self.editor.refresh_channels()
 
     def _new_read_request(self) -> int:
         """Start a new read generation, cancelling any older read or timer.
@@ -629,7 +678,7 @@ class App:
             t.cancel()
 
     def _read_thread(self, n: int, gen: int, select: bool = True,
-                     live: bool | None = None) -> None:
+                     live: bool | None = None, force: bool = False) -> None:
         """Read slot ``n``; afterwards the editor, the slot and the amp's
         current sound are the same patch, which is what makes live edit
         meaningful.
@@ -645,6 +694,7 @@ class App:
                 slot without touching the amp's channel (the Read button).
             live: whether live edit may start afterwards; None: only if the amp
                 plays this slot (a resync after a switch passes True).
+            force: read the slot from the amp even if it is remembered.
         """
         from ..amp.read import read_patch
         from ..amp.write import select_patch
@@ -663,7 +713,12 @@ class App:
                     self._note_self_select(n)
                     select_patch(self.transport, n)
                     self.amp_patch = n
-                ps = read_patch(self.transport, n, progress=progress)
+                cached = None if force else self.slot_cache.get(n)
+                if cached is not None:
+                    ps = cached.copy()      # as read or written before: no wire read
+                else:
+                    ps = read_patch(self.transport, n, progress=progress)
+                    self.slot_cache[n] = ps.copy()
                 with self.state_lock:
                     if gen != self._read_gen:
                         return              # a newer request owns the editor now
@@ -971,6 +1026,8 @@ class App:
         self.busy_writing = True
         try:
             self._store(n, ps, self.patch_name() or None)
+            if self.patch_name():
+                self.slot_cache[n] = ps.copy()
             self.dirty = False
             self._synced()
             self.set_status(f"Wrote {self.slot_name(n)}: {self.patch_name()!r}")
@@ -993,10 +1050,14 @@ class App:
             name: the patch name to store, or ``None`` to keep the patch's own.
         """
         from ..amp.write import write_patch, write_patch_keep_sound
+        self._forget_slots(n)               # unknown if the write fails half-way
         if self.amp_patch is None or self.amp_patch == n:
             write_patch(self.transport, n, ps, name)
         else:
             write_patch_keep_sound(self.transport, n, ps, name)
+        stored = name or ParamSet.patch_name(ps.block("PATCH%COM"))
+        if stored:                          # else the amp picks a default name
+            self.slot_names[n] = stored
 
     def clear_patch(self, n: int) -> None:
         """Clear amp slot ``n`` on the amp in a background thread.
@@ -1019,6 +1080,7 @@ class App:
         self.set_busy(True, f"Clearing {self.slot_name(n)}…")
         self.busy_writing = True
         try:
+            self._forget_slots(n)
             clear_patch(self.transport, n)
             self.set_status(f"Cleared {self.slot_name(n)}.")
         except Exception as e:                       # noqa: BLE001
@@ -1440,6 +1502,7 @@ class App:
             kept = save_before_restore(read_backup(
                 self.transport,
                 lambda i, n, text: self._step_progress(i, n, "Keeping a copy: " + text)))
+            self._forget_slots()
             write_backup(self.transport, backup, self._step_progress)
             self.system_ps = backup.system
             self.set_status(f"Restored the amp; what it held before is in {kept}.")
@@ -1450,7 +1513,8 @@ class App:
             self.busy_writing = False
             self.refresh()
         if done:
-            self.read_patch(self.patch_number)       # the editor shows the restored slot
+            self.read_patch(self.patch_number, force=True)   # the editor shows the restored slot
+            self.page.run_thread(self._read_slot_names, self.transport)
 
     # ------------------------------------------------------- system region
 

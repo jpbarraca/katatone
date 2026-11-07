@@ -147,6 +147,23 @@ def read_region(t: Transport, region_name: str, progress=None) -> ParamSet:
     return ps
 
 
+def read_patch_name(t: Transport, patch_number: int) -> str:
+    """Read just the name of user patch N (0-9): one small RQ1.
+
+    Args:
+        t: the connected transport.
+        patch_number: the patch to read, 0-9.
+    Returns:
+        The patch name ("" if it has none).
+    Raises:
+        ValueError: if `patch_number` is outside 0-9.
+    """
+    if not 0 <= patch_number <= 9:
+        raise ValueError("patch_number must be 0-9")
+    block = load_map()[f"PATCH({patch_number + 1})"].block("COM")
+    return ParamSet.patch_name(_read_block_chunked(t, block.base_addr, 16))
+
+
 def read_patch(t: Transport, patch_number: int, progress=None) -> ParamSet:
     """Read user patch N (0-9) into a ParamSet keyed by PATCH%BLOCK.
 
