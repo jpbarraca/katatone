@@ -13,6 +13,7 @@ import json
 import sys
 import threading
 import time
+from pathlib import Path
 from collections import deque
 import traceback
 
@@ -36,6 +37,11 @@ TRACE_COLORS = {"reference": "#6aa6ff", "A": "#8bc34a", "B": "#ba68c8"}
 DIFF_RANGE_DB = 12.0
 DIFF_ABOVE, DIFF_BELOW = "#d7a03e", "#4a90d9"
 HINT_PERIOD_S = 0.5
+#: Only playing goes into the average the comparison and the EQ proposals are made from: a
+#: frame counts when its level (RMS, dBFS) is above LIVE_GATE_DB and within LIVE_GATE_REL_DB of
+#: the loudest recent frame (which falls LOUD_FALL_DB_S dB per second).  Silence and the dying
+#: tail of a note would otherwise drag the average to the noise floor and the proposals with it.
+LIVE_GATE_DB, LIVE_GATE_REL_DB, LOUD_FALL_DB_S = -60.0, 30.0, 2.0
 #: How long a notice (a file that could not be read ...) stays on the status line.
 NOTICE_S = 8.0
 #: Seconds of playing kept for the spectrogram and for the analysis of the notes, and how
@@ -165,6 +171,9 @@ class Analyzer:
         self.tap = reference.TapTempo()
         self._picker = ft.FilePicker()
         self._loaded: reference.Reference | None = None     # handed over by the loader thread
+        self._loud_db = dsp.FLOOR_DB                        # the loudest recent frame (see LIVE_GATE_DB)
+        self._loaded_path: str | None = None                # ... and the file it came from
+        self._ref_path: str | None = None                   # the file of the reference held now
         self._load_error = ""
         self._hint_lines: list[str] = []
         self._hint_at = 0.0
@@ -210,6 +219,15 @@ class Analyzer:
                                  overflow=ft.TextOverflow.ELLIPSIS, width=170)
         self.ref_clear = ft.IconButton(ft.Icons.CLOSE, icon_size=16, tooltip="Remove the reference",
                                        on_click=lambda e: self._clear_reference())
+        # Which part of the file is the reference: m:ss or seconds; empty = the whole file.
+        tip = ("Use only this part of the reference: write seconds (90) or minutes:seconds (1:30), "
+               "then press Enter. Empty: from the start / to the end")
+        self.ref_start = ft.TextField(label="From", hint_text="0:00", width=84, value="", tooltip=tip,
+                                      on_submit=self._range_changed, on_blur=self._range_changed,
+                                      **pv.FIELD_STYLE)
+        self.ref_stop = ft.TextField(label="To", hint_text="end", width=84, value="", tooltip=tip,
+                                     on_submit=self._range_changed, on_blur=self._range_changed,
+                                     **pv.FIELD_STYLE)
         self.match = ft.Checkbox(
             label="Match level", value=True,
             tooltip="Line the reference and the takes up with your level, so only the "
@@ -273,7 +291,7 @@ class Analyzer:
                          padding=ft.Padding(left=0, right=0, top=8, bottom=0)),
             ft.Row([self.scale, self.show_strings, self.show_zones], spacing=16,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ft.Row([self.ref_btn, self.ref_label, self.ref_clear,
+            ft.Row([self.ref_btn, self.ref_label, self.ref_clear, self.ref_start, self.ref_stop,
                     ft.Container(self.match, width=140),       # a bare labelled Checkbox fills the row
                     self.take_a, self.take_b, self.compare_dd, self.eq_preview, self.apply_btn, self.lower,
                     self.tap_btn, self.tap_label],
@@ -372,6 +390,7 @@ class Analyzer:
         """Reset the peak hold, the clip light and the spectrum average."""
         with self.lock:
             self.smooth.reset()
+            self._loud_db = dsp.FLOOR_DB
             self.hold = dsp.PeakHold()
             self._clipped = False
             self.history.clear()
@@ -413,6 +432,12 @@ class Analyzer:
                     return
                 traceback.print_exc()           # ends up in analyzer.log
 
+    def _playing(self, rms_db: float) -> bool:
+        """Whether a frame of this level is playing and so goes into the average (see
+        :data:`LIVE_GATE_DB`); also follows the loudest recent level."""
+        self._loud_db = max(rms_db, self._loud_db - LOUD_FALL_DB_S / FPS)
+        return rms_db >= max(LIVE_GATE_DB, self._loud_db - LIVE_GATE_REL_DB)
+
     def _tick(self) -> None:
         """Compute levels and the spectrum and redraw both canvases."""
         listening = self.capture is not None and not self._error
@@ -420,9 +445,11 @@ class Analyzer:
             peak_lin, self._peak_acc = self._peak_acc, 0.0
             if listening:
                 spec = self.spectrum.compute()
-                self.smooth.update(spec)
+                rms_db = dsp.levels(self.spectrum._buf[-2400:])[1]
+                self.smooth.update(spec, fold=self._playing(rms_db))
                 self._columns.append(spec)
-            rms_db = dsp.levels(self.spectrum._buf[-2400:])[1] if listening else dsp.FLOOR_DB
+            else:
+                rms_db = dsp.FLOOR_DB
             peak_db = dsp.to_db(peak_lin)
             held = self.hold.update(peak_db)
             if peak_db >= CLIP_DB:
@@ -625,10 +652,11 @@ class Analyzer:
         if not force and now - self._hint_at < HINT_PERIOD_S:
             return
         self._hint_at = now
-        fits = self.cmp.eq_fits(avg, self.spectrum.freqs) if listening else None
+        heard = float(avg.max()) > dsp.FLOOR_DB + 1       # nothing played yet: nothing to compare
+        fits = self.cmp.eq_fits(avg, self.spectrum.freqs) if listening and heard else None
         self._fits = fits
         self._update_apply()
-        lines = self.cmp.hints(avg, self.spectrum.freqs, listening, self._insight, fits)
+        lines = self.cmp.hints(avg, self.spectrum.freqs, listening and heard, self._insight, fits)
         if lines == self._hint_lines and not force:
             return
         self._hint_lines = lines
@@ -646,14 +674,53 @@ class Analyzer:
             return
         if not paths:
             return
-        self.ref_label.value = f"Reading {paths[0].name}…"
-        self._update(self.ref_label)
-        self.page.run_thread(self._load_reference, str(paths[0]))
-
-    def _load_reference(self, path: str) -> None:
-        """Worker: analyse the file; the result is picked up by the next frame."""
         try:
-            self._loaded = reference.analyse(path, SPEC_POINTS, self.linear)
+            start, stop = self._range()
+        except ValueError as ex:
+            self._say(str(ex), error=True)
+            return
+        self._start_loading(str(paths[0]), start, stop)
+
+    def _range(self) -> tuple[float, float | None]:
+        """The part of the reference file asked for in the From and To fields.
+
+        Raises:
+            ValueError: with a message for the user, if a field is not a time or
+                the part is empty.
+        """
+        start = reference.parse_time(self.ref_start.value or "") or 0.0
+        stop = reference.parse_time(self.ref_stop.value or "")
+        if stop is not None and stop <= start:
+            raise ValueError("the To time must be after the From time")
+        return start, stop
+
+    def _start_loading(self, path: str, start: float, stop: float | None) -> None:
+        """Analyse (the part of) a file on a worker thread."""
+        self.ref_label.value = f"Reading {Path(path).name}…"
+        self._update(self.ref_label)
+        self.page.run_thread(self._load_reference, path, start, stop)
+
+    def _range_changed(self, e=None) -> None:
+        """From or To changed (Enter, or the field lost the focus): analyse the part again.
+
+        With no reference loaded the times only wait for the next file; one that is
+        wrong is reported and the reference held is kept.
+        """
+        try:
+            start, stop = self._range()
+        except ValueError as ex:
+            self._say(str(ex), error=True)
+            return
+        held = self.cmp.reference
+        if self._ref_path is None or held is None or (start, stop) == (held.start, held.stop):
+            return
+        self._start_loading(self._ref_path, start, stop)
+
+    def _load_reference(self, path: str, start: float = 0.0, stop: float | None = None) -> None:
+        """Worker: analyse the file (or the part of it); the result is picked up by the next frame."""
+        try:
+            self._loaded = reference.analyse(path, SPEC_POINTS, self.linear, start=start, stop=stop)
+            self._loaded_path = path
         except Exception as ex:                       # noqa: BLE001
             self._load_error = str(ex)
 
@@ -662,9 +729,10 @@ class Analyzer:
         loaded, self._loaded = self._loaded, None
         if loaded is not None:
             self.cmp.reference = loaded
+            self._ref_path = self._loaded_path
             self.cmp.mode = "ref"
             self.compare_dd.value = "ref"
-            self.ref_label.value = loaded.name
+            self.ref_label.value = f"{loaded.name} {loaded.part_text()}".strip()
             self.ref_label.color = theme.FOREGROUND
             if loaded.bpm > 0 and loaded.bpm_confidence >= reference.PULSE_CONFIDENCE:
                 self.tap_label.value = f"{loaded.bpm:.0f} BPM from the reference"
@@ -674,7 +742,7 @@ class Analyzer:
         if self._load_error:
             msg, self._load_error = self._load_error, ""
             held = self.cmp.reference                 # a failed load keeps the one already held
-            self.ref_label.value = held.name if held else "no reference"
+            self.ref_label.value = f"{held.name} {held.part_text()}".strip() if held else "no reference"
             self.ref_label.color = theme.FOREGROUND if held else theme.MUTED
             self._say(msg, error=True)
             self._update(self.ref_label)
@@ -688,6 +756,7 @@ class Analyzer:
     def _clear_reference(self) -> None:
         """Forget the reference."""
         self.cmp.reference = None
+        self._ref_path = None
         self.ref_label.value, self.ref_label.color = "no reference", theme.MUTED
         self._update(self.ref_label)
 

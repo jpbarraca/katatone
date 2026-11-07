@@ -39,13 +39,52 @@ class AudioError(RuntimeError):
     """The file cannot be read."""
 
 
+def parse_time(text: str) -> float | None:
+    """Seconds from ``"90"``, ``"1:30"``, ``"1:02:03"`` or ``"1:30.5"``; None for an empty text.
+
+    Raises:
+        ValueError: with a message for the user, if the text is not a time.
+    """
+    text = text.strip()
+    if not text:
+        return None
+    parts = text.split(":")
+    try:
+        if len(parts) > 3 or any(not p.strip() for p in parts):
+            raise ValueError
+        seconds = 0.0
+        for p in parts:
+            number = float(p)
+            if number < 0 or number != number or number == float("inf"):
+                raise ValueError
+            seconds = seconds * 60 + number
+    except ValueError:
+        raise ValueError(f"{text!r} is not a time: write seconds (90) or minutes:seconds (1:30)") from None
+    return seconds
+
+
+def format_time(seconds: float) -> str:
+    """``m:ss`` (``h:mm:ss`` from an hour, with tenths when the time has them)."""
+    whole = int(seconds)
+    tenths = round((seconds - whole) * 10)
+    if tenths == 10:
+        whole, tenths = whole + 1, 0
+    h, rest = divmod(whole, 3600)
+    m, sec = divmod(rest, 60)
+    text = f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+    return f"{text}.{tenths}" if tenths else text
+
+
 # --------------------------------------------------------------- loading
 
-def _read_wav(path: Path) -> tuple[np.ndarray, int]:
-    """Mono float samples of a PCM WAV file (8, 16, 24 or 32 bit)."""
+def _read_wav(path: Path, start: float = 0.0,
+              span: float = MAX_SECONDS) -> tuple[np.ndarray, int]:
+    """Mono float samples of a PCM WAV file (8, 16, 24 or 32 bit): ``span`` seconds from ``start``."""
     with wave.open(str(path), "rb") as w:
         ch, width, rate, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
-        raw = w.readframes(min(n, int(MAX_SECONDS * w.getframerate())))
+        first = min(n, int(start * rate))
+        w.setpos(first)
+        raw = w.readframes(min(n - first, int(span * rate)))
     if width == 1:
         data = (np.frombuffer(raw, np.uint8).astype(np.float32) - 128.0) / 128.0
     elif width == 2:
@@ -68,30 +107,46 @@ def _resample(x: np.ndarray, rate: int, target: int) -> np.ndarray:
     return np.interp(np.linspace(0, x.size - 1, n), np.arange(x.size), x).astype(np.float32)
 
 
-def load_audio(path: str | Path, rate: int = RATE) -> np.ndarray:
+def load_audio(path: str | Path, rate: int = RATE, start: float = 0.0,
+               stop: float | None = None) -> np.ndarray:
     """Mono float32 samples of an audio file at ``rate``.
 
     WAV files are read directly; other formats (MP3, FLAC, OGG, M4A ...) through
     ``ffmpeg`` when it is installed.  At most :data:`MAX_SECONDS` are read.
 
+    Args:
+        path: the file.
+        rate: the sample rate to return.
+        start: where to begin reading, in seconds.
+        stop: where to stop, in seconds (None: the end of the file, or
+            :data:`MAX_SECONDS` after ``start``).
     Raises:
         AudioError: if the file cannot be read, with what to do about it.
     """
     path = Path(path)
+    span = MAX_SECONDS if stop is None else min(MAX_SECONDS, stop - start)
+    if start < 0 or span <= 0:
+        raise AudioError("the stop time must be after the start time")
     if not path.is_file():
         raise AudioError(f"{path.name}: no such file")
+    past_end = AudioError(f"{path.name}: the file ends before {format_time(start)}")
     if path.suffix.lower() == ".wav":
         try:
-            x, r = _read_wav(path)
-            return _resample(x, r, rate).astype(np.float32)
+            x, r = _read_wav(path, start, span)
         except (wave.Error, EOFError, AudioError):
             pass                                    # e.g. float WAV: let ffmpeg try
+        else:
+            if x.size == 0 and start > 0:
+                raise past_end
+            return _resample(x, r, rate).astype(np.float32)
     ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise AudioError(f"{path.name}: needs ffmpeg for this format (or use a PCM WAV file)")
-    p = subprocess.run([ffmpeg, "-v", "error", "-i", str(path), "-t", str(MAX_SECONDS),
+    p = subprocess.run([ffmpeg, "-v", "error", "-ss", str(start), "-i", str(path), "-t", str(span),
                         "-ac", "1", "-ar", str(rate), "-f", "f32le", "-"],
                        capture_output=True, timeout=120)
+    if p.returncode == 0 and not p.stdout and start > 0:
+        raise past_end
     if p.returncode != 0 or not p.stdout:
         msg = p.stderr.decode(errors="replace").strip().splitlines()
         raise AudioError(f"{path.name}: cannot be decoded" + (f" ({msg[-1]})" if msg else ""))
@@ -304,10 +359,19 @@ class Reference:
     delays: list = field(default_factory=list)
     envelope: "envelope_mod.Envelope | None" = None      # how its notes begin and fade
     content: "content_mod.Content | None" = None         # which notes are played
+    start: float = 0.0                   # the part of the file that was analysed, in seconds
+    stop: float | None = None            # (None: to the end)
+
+    def part_text(self) -> str:
+        """``0:30-1:10`` when only part of the file was analysed, else an empty text."""
+        if self.start <= 0 and self.stop is None:
+            return ""
+        return f"{format_time(self.start)}-{format_time(self.stop) if self.stop is not None else 'end'}"
 
     def summary(self) -> list[str]:
         """The reference's character in a few lines."""
-        lines = [f"Reference: {self.name} ({self.seconds:.0f} s)",
+        part = f", {self.part_text()}" if self.part_text() else ""
+        lines = [f"Reference: {self.name} ({self.seconds:.0f} s{part})",
                  f"Brightness: centre {self.centroid:.0f} Hz, slope {self.tilt:+.1f} dB/octave",
                  f"Gain: {self.gain.label.lower()} (crest factor {self.gain.crest_db:.1f} dB)"]
         if self.envelope is not None:
@@ -324,13 +388,14 @@ class Reference:
 
 
 def analyse(path: str | Path, points: int = 160, linear: bool = False,
-            rate: int = RATE) -> Reference:
-    """Load a reference file and work out its spectrum and descriptors.
+            rate: int = RATE, start: float = 0.0, stop: float | None = None) -> Reference:
+    """Load a reference file (or the part of it between ``start`` and ``stop``, in
+    seconds) and work out its spectrum and descriptors.
 
     Raises:
         AudioError: if the file cannot be read or holds no sound.
     """
-    samples = load_audio(path, rate)
+    samples = load_audio(path, rate, start, stop)
     if samples.size < dsp.N_FFT:
         raise AudioError(f"{Path(path).name}: too short")
     freqs, levels = long_term_spectrum(samples, rate, points, linear)
@@ -340,4 +405,5 @@ def analyse(path: str | Path, points: int = 160, linear: bool = False,
     return Reference(Path(path).name, freqs, levels, samples.size / rate,
                      centroid_hz(levels, freqs), tilt_db_per_octave(levels, freqs),
                      gain_character(samples, rate), bpm, conf, delay_times(bpm),
-                     envelope_mod.analyse(samples, rate), content_mod.analyse(samples, rate))
+                     envelope_mod.analyse(samples, rate), content_mod.analyse(samples, rate),
+                     start, stop)

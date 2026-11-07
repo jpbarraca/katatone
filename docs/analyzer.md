@@ -32,9 +32,17 @@ for where to start turning the amp's tone controls, not a measurement of the ori
 gear.
 
 - **Reference…** loads the part you want to sound like (WAV, or MP3, FLAC, OGG, M4A,
-  AAC and Opus when `ffmpeg` is installed; the first four minutes are read).  Pauses
+  AAC and Opus when `ffmpeg` is installed; at most four minutes are read).  Pauses
   are left out of the average.  The reference's average spectrum is drawn in blue
   behind the live one.  **✕** forgets it.
+- **From** and **To** limit the reference to one part of the file, for example the solo and not
+  the whole song.  Write seconds (`90`) or minutes and seconds (`1:30`, `1:02:03`, `1:30.5`);
+  empty means the start or the end of the file.  Press Enter, or click elsewhere, and the part is
+  analysed again at once; the times also apply to the next file you choose.  The name next to the
+  button then shows the part (`solo.mp3 1:10-1:42`).  Only that part gives the spectrum, the
+  brightness, the gain guess, the tempo, the notes and the pick described below.  A time that is
+  not a time, a **To** before **From**, or a **From** after the end of the file is reported and
+  the reference you had is kept.  At most four minutes from **From** are read.
 - **Set A** / **Set B** keep the current average spectrum of the live input as a take.
   Capture one take, change the amp, capture the other: the take is drawn in green (A) or
   purple (B).  Nothing is captured until the analyzer has heard sound.
@@ -50,6 +58,13 @@ gear.
   pulse is found, with delay times that fit it) and, once you are playing, what to turn: the mean
   difference in the amp's Bass (80–250 Hz), Middle (250 Hz–2 kHz), Treble (2–5 kHz) and
   Presence (5–10 kHz) ranges, the biggest first; bands within 1.5 dB are left out.
+- **Only your playing is compared.**  The live spectrum used for the difference panel, the hints
+  and the EQ proposals follows the frames where you are playing and **holds when you stop**, so a
+  proposal does not change while you reach for the mouse.  A frame counts when its level is above
+  -60 dBFS and not more than 30 dB below the loudest recent playing, so silence, noise and the dying
+  tail of a note are left out.  Until something has been played there is nothing to compare, and the
+  hints say so.  The level meter and the spectrogram still show everything; **Clear** forgets the
+  held spectrum.
 - **EQ preview** and the *EQ settings that fit* (in the hints): the difference is fitted to
   the amp's own EQ blocks, so you get values to dial in rather than "less middle".  The
   *Graphic EQ (GE-10)* proposal is a gain in whole dB (within ±12) for each of the ten

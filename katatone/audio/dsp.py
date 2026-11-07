@@ -99,9 +99,16 @@ class Smoother:
         self.avg = np.full(points, FLOOR_DB)
         self.peak = np.full(points, FLOOR_DB)
 
-    def update(self, spectrum: np.ndarray) -> None:
-        """Fold in a new spectrum."""
-        self.avg += self.alpha * (spectrum - self.avg)
+    def update(self, spectrum: np.ndarray, fold: bool = True) -> None:
+        """Fold in a new spectrum.
+
+        Args:
+            spectrum: the newest spectrum.
+            fold: add it to the average.  False for a pause in the playing: the average then
+                keeps what was last played (only the held peak keeps falling).
+        """
+        if fold:
+            self.avg += self.alpha * (spectrum - self.avg)
         self.peak = np.maximum(spectrum, self.peak - self.decay)
 
     def reset(self) -> None:

@@ -84,6 +84,18 @@ def test_smoother_averages_and_holds_the_peak() -> None:
     assert sm.avg[0] < -10.0 and sm.avg[0] > -100.0
 
 
+def test_a_pause_keeps_the_average_and_lets_only_the_peak_fall() -> None:
+    sm = dsp.Smoother(3, alpha=0.5, hold_decay_db=1.0)
+    sm.update(np.array([-10.0, -20.0, -30.0]))
+    assert list(sm.avg) == [-65.0, -70.0, -75.0]                # half way from the floor (-120)
+    for _ in range(20):
+        sm.update(np.full(3, -100.0), fold=False)
+    assert list(sm.avg) == [-65.0, -70.0, -75.0]                # silence did not move it
+    assert list(sm.peak) == [-30.0, -40.0, -50.0]               # the held peak fell 1 dB per update
+    sm.update(np.array([-10.0, -20.0, -30.0]))                  # playing again is folded in as before
+    assert list(sm.avg) == [-37.5, -45.0, -52.5]
+
+
 def test_peak_hold_holds_then_falls() -> None:
     h = dsp.PeakHold(hold_updates=2, fall_db=1.0)
     assert h.update(-6.0) == -6.0
