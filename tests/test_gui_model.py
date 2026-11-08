@@ -414,3 +414,18 @@ def test_amp_variations_are_checkboxes_left_of_the_amp_type() -> None:
 def test_the_amp_card_puts_its_checkboxes_and_the_amp_type_on_one_line() -> None:
     from katatone.gui.patch_editor import PatchEditor
     assert PatchEditor._body_style("AMP") == "two_lines"
+
+
+
+def test_the_pitch_shifter_shows_direct_mix_then_voice_1_then_voice_2() -> None:
+    from katatone.address.map import load_map
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    keys = model.fx_detail_groups(region, "FX_DETAIL(1)")
+    rows = model.fx_detail_rows(region, "FX_DETAIL(1)", keys.index("PITCHSHIFT"), ParamSet())
+    knobs = [r.label for r in rows if r.kind == "knob"]
+    assert knobs == ["DIRECT MIX", "PITCH1", "FINE1", "PRE DELAY1", "LEVEL1", "FEEDBACK1",
+                     "PITCH2", "FINE2", "PRE DELAY2", "LEVEL2"]
+    assert rows[0].label == "VOICE"                            # the selector stays first
+    other = model.fx_detail_rows(region, "FX_DETAIL(1)", 0, ParamSet())
+    assert [r.p_index for r in other] == sorted(r.p_index for r in other)   # others untouched

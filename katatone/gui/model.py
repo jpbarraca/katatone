@@ -444,6 +444,18 @@ def fx_detail_groups(region: Region, detail_block: str) -> list[str]:
     return keys
 
 
+def _pitchshift_rank(label: str) -> int:
+    """Pitch shifter display order: the rest (VOICE), DIRECT MIX, voice 1, voice 2."""
+    if label == "DIRECT MIX":
+        return 0
+    return {"1": 1, "2": 2}.get(label[-1:], -1)
+
+
+# Effects whose rows are shown in another order than the address table's: the
+# sort key of a row's label (the sort is stable, so ties keep the table order).
+_FX_ROW_ORDER = {"PITCHSHIFT": _pitchshift_rank}
+
+
 def fx_detail_rows(region: Region, detail_block: str, fx_type: int,
                    ps: ParamSet) -> list[RowDesc]:
     """Rows of ``detail_block`` that belong to the selected FX TYPE.
@@ -455,7 +467,8 @@ def fx_detail_rows(region: Region, detail_block: str, fx_type: int,
         ps: the loaded ParamSet supplying the current values.
 
     Returns:
-        The matching rows with the effect-key prefix stripped from the label;
+        The matching rows with the effect-key prefix stripped from the label
+        (in the address table's order, but for the effects in ``_FX_ROW_ORDER``);
         an empty list when fx_type is out of range.
     """
     keys = fx_detail_groups(region, detail_block)
@@ -471,4 +484,5 @@ def fx_detail_rows(region: Region, detail_block: str, fx_type: int,
                 label = label[len(key) + 1:]
             out.append(RowDesc(row.block, row.p_index, row.param, row.kind,
                                label, row.value, row.options))
-    return out
+    rank = _FX_ROW_ORDER.get(key)
+    return sorted(out, key=lambda r: rank(r.label)) if rank else out
