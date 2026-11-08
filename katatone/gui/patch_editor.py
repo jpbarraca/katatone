@@ -35,6 +35,7 @@ _DIVIDER_HEIGHT = 1
 _CONTENT_TOP = 12
 _ALIGN_NUDGE = 8      # measured by eye: Flutter adds a little around the tab row
 _ASSIGN_CHIP_HEIGHT = 30
+_AMP_NS_GAP = 16        # between the amp's knobs and the noise suppressor's
 _ASSIGN_GAP = 14       # between the pedal and the GA-FC rows of an effect's Assign card
 _CARDS_TOP = _TAB_HEIGHT + _DIVIDER_HEIGHT + _CONTENT_TOP + _ALIGN_NUDGE
 
@@ -687,19 +688,22 @@ class PatchEditor:
 
     def _amp_card(self, region) -> ft.Control:
         """The AMP card: the variation switches and the amp type on a line with the OTHER
-        block's cabinet resonance and master key, then the amp's knobs, then the noise
-        suppressor (NS) with its labels spelled out."""
+        block's cabinet resonance and master key, then the amp's knobs with the noise
+        suppressor (NS, its labels spelled out) on the same line, after a small gap."""
         ps = self.app.ps
         other = [r for r in model.row_for_block(region, "OTHER", ps)
                  if not r.param.name.endswith("_CHAIN")]
         switches, selectors, knobs = pv.block_widgets(
             model.row_for_block(region, "AMP", ps), self._set_param)
         _, other_selectors, _ = pv.block_widgets(other, self._set_param)
-        body = [pv.inline_row([*switches, *selectors, *other_selectors]),
-                pv.wrap_row(knobs, spacing=6)]
         ns = [dataclasses.replace(r, label=self._NS_LABELS.get(r.label, r.label))
               for r in model.row_for_block(region, "NS", ps)]
-        body += pv.block_body(ns, self._set_param, "inline")
+        ns_switches, ns_selectors, ns_knobs = pv.block_widgets(ns, self._set_param)
+        # The noise suppressor continues the amp's knob line, after a small gap.
+        knob_line = [*knobs, ft.Container(width=_AMP_NS_GAP),
+                     *ns_switches, *ns_selectors, *ns_knobs]
+        body = [pv.inline_row([*switches, *selectors, *other_selectors]),
+                pv.wrap_row(knob_line, spacing=6)]
         return pv.module_card(model.block_title("AMP"), body, wide=True)
 
     def _fx_card(self, region, bname: str) -> ft.Control:

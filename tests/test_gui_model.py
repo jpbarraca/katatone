@@ -700,7 +700,8 @@ def test_the_amp_card_lines_and_the_noise_suppressor_names() -> None:
     kinds = [[type(x).__name__ for x in r.controls] for r in rows]
     # line 1: the two variation switches, then amp type, cabinet resonance and master key
     assert ["Container", "Container", "Column", "Column", "Column"] in kinds
-    assert ["Knob"] * 7 in kinds                              # line 2: the amp's knobs alone
+    # line 2: the amp's seven knobs, a gap, the noise suppressor's switch and its two knobs
+    assert ["Knob"] * 7 + ["Container", "Container", "Knob", "Knob"] in kinds
     shown = _titles(amp)
     switches = [c.label for c in _flatten(amp) if type(c).__name__ == "Checkbox"]
     assert "NOISE SUPPRESSOR" in switches                     # the NS enable switch
