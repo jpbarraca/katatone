@@ -150,12 +150,87 @@ def test_scroll_wheel_and_touchpad(knob: Knob, calls) -> None:
     assert calls["end"] == [51, 52, 51, 52, 53]
 
 
-def test_double_tap_resets_to_default(knob: Knob) -> None:
-    """A double tap restores the knob to its default (mid-range) value after a drag."""
+@pytest.fixture
+def mounted(monkeypatch):
+    """The knob counts as mounted, on a page that records the dialogs shown."""
+    page = NS(shown=[], show_dialog=lambda d: page.shown.append(d), update=lambda *a, **k: None,
+              pop_dialog=lambda: page.shown.pop())
+    import flet as ft
+    monkeypatch.setattr(Knob, "page", property(lambda self: page))
+    monkeypatch.setattr(ft.TextField, "update", lambda self: None)
+    Knob.selected = None
+    yield page
+    Knob.selected = None
+
+
+def test_a_click_selects_the_knob_and_lights_its_rim(knob: Knob, mounted) -> None:
+    """Tapping selects one knob at a time; the selected knob's rim is drawn in the accent colour."""
+    other = Knob(value=5, min=0, max=10)
+    knob._on_tap()
+    assert Knob.selected is knob and knob._rim.paint.stroke_width > 2
+    other._on_tap()
+    assert Knob.selected is other and knob._rim.paint.stroke_width < 2
+
+
+def test_arrows_step_the_selected_knob(knob: Knob, calls, mounted) -> None:
+    """Up / down change the value by 1 and right / left by 10, and each change ends like a wheel step."""
+    knob._on_tap()
+    assert Knob.handle_key("Arrow Up") and knob.value == 51
+    assert Knob.handle_key("Arrow Down") and Knob.handle_key("Arrow Down") and knob.value == 49
+    assert Knob.handle_key("Arrow Right") and knob.value == 59
+    assert Knob.handle_key("Arrow Left") and Knob.handle_key("Arrow Left") and knob.value == 39
+    assert calls["change"][:2] == [51, 50] and calls["end"][-1] == 39
+
+
+def test_arrows_stop_at_the_ends_and_other_keys_are_not_used(knob: Knob, mounted) -> None:
+    """The value stays within the range; a key that is not an arrow is left alone."""
+    knob._on_tap()
+    knob.set_value(95)
+    Knob.handle_key("ArrowRight")
+    assert knob.value == 100
+    assert not Knob.handle_key("a") and knob.value == 100
+
+
+def test_without_a_selection_or_after_deselecting_the_arrows_do_nothing(knob: Knob, mounted) -> None:
+    """No knob is moved before one is selected, nor once the selection is cleared."""
+    assert not Knob.handle_key("Arrow Up") and knob.value == 50
+    knob._on_tap()
+    Knob.deselect()
+    assert not Knob.handle_key("Arrow Up") and knob.value == 50
+
+
+def test_a_knob_that_left_the_page_is_not_moved(knob: Knob, monkeypatch) -> None:
+    """A selected knob that was rebuilt away (unmounted) ignores the keys and drops the selection."""
+    monkeypatch.setattr(Knob, "page", property(lambda self: (_ for _ in ()).throw(RuntimeError("x"))))
+    Knob.selected = knob
+    assert not Knob.handle_key("Arrow Up") and knob.value == 50 and Knob.selected is None
+
+
+def test_double_tap_resets_to_default(knob: Knob, mounted) -> None:
+    """A double tap restores the knob to its default (mid-range) value after a drag, and selects it."""
     _drag(knob, [(0, 10)] * 5)
     assert knob.value == 25
     knob._on_double_tap()
-    assert knob.value == 50
+    assert knob.value == 50 and Knob.selected is knob and not mounted.shown
+
+
+def test_a_click_on_the_number_asks_for_the_value(knob: Knob, calls, mounted) -> None:
+    """Tapping the number opens a dialog; a typed value in range is applied, others are refused."""
+    assert knob._value_click.content is knob._value_text
+    knob._value_click.on_tap(None)
+    dialog, = mounted.shown
+    field = dialog.content
+    assert field.value == "50" and knob._prompting
+    assert not Knob.handle_key("Arrow Up")              # typing: the arrows are the field's
+    field.value = "300"
+    field.on_submit(None)
+    assert knob.value == 50 and field.error_text and mounted.shown
+    field.value = "abc"
+    field.on_submit(None)
+    assert knob.value == 50 and mounted.shown
+    field.value = "73"
+    field.on_submit(None)
+    assert knob.value == 73 and calls["end"][-1] == 73 and not mounted.shown and not knob._prompting
 
 
 def test_set_value_clamps_without_callbacks(knob: Knob, calls) -> None:

@@ -7,7 +7,11 @@ Interaction
   plugins): grabbing the knob never makes it jump, and ``drag_pixels`` of
   travel cover the full range regardless of the knob's on-screen size.
 * **Mouse wheel**: one ``wheel_step`` per notch (default ~1% of the range).
-* **Double-click**: reset to ``default`` (the initial value if unset).
+* **Click** selects the knob (its rim lights up); while it is selected, up / down
+  arrow change the value by 1 and right / left by 10 (the page's key handler
+  forwards them: see :meth:`Knob.handle_key`).
+* **Click on the number**: type the value in a small dialog.
+* **Double-click** the knob: reset to ``default`` (the initial value if unset).
 
 Why it is built this way
 ------------------------
@@ -41,7 +45,7 @@ set the value with :meth:`Knob.set_value` (or assign ``value`` and call
 from __future__ import annotations
 
 import math
-from typing import Callable, Optional
+from typing import Callable, ClassVar, Optional
 
 import flet as ft
 import flet.canvas as cv
@@ -94,6 +98,12 @@ class Knob(ft.Column):
     on_change: Optional[Callable[[int], None]] = skip_field()
     on_change_end: Optional[Callable[[int], None]] = skip_field()
 
+    #: The knob the arrow keys act on (None: none selected).
+    selected: ClassVar[Optional["Knob"]] = None
+    #: Value change of each arrow key.
+    KEY_STEPS: ClassVar[dict[str, int]] = {"arrowup": 1, "arrowdown": -1,
+                                           "arrowright": 10, "arrowleft": -10}
+
     def init(self) -> None:
         """Build the knob: clamp the value, derive the defaults and draw the
         canvas (ticks, arcs, pointer, cap) behind the gesture handlers."""
@@ -113,6 +123,7 @@ class Knob(ft.Column):
         arc_box = dict(x=c - ring_r, y=c - ring_r,
                        width=2 * ring_r, height=2 * ring_r)
         self._body_r = c - 11                    # knob cap radius
+        self._prompting = False                  # the value dialog is open
 
         def stroke(color: str, width: float) -> ft.Paint:
             """A rounded-cap stroke ``Paint`` for the canvas shapes."""
@@ -134,6 +145,7 @@ class Knob(ft.Column):
                                  sweep_angle=0, paint=stroke(self.accent, 3))
         self._pointer = cv.Line(c, c, c, c, paint=stroke(theme.POINTER, 2.5))
         r = self._body_r
+        self._rim = cv.Circle(c, c, r, paint=stroke(theme.KNOB_RIM, 1.2))
         self._canvas = cv.Canvas(
             width=s, height=s,
             shapes=[
@@ -149,7 +161,7 @@ class Knob(ft.Column):
                         center=ft.Offset(c - r * 0.35, c - r * 0.45),
                         radius=r * 1.6,
                         colors=[theme.KNOB_HI, theme.KNOB_LO]))),
-                cv.Circle(c, c, r, paint=stroke(theme.KNOB_RIM, 1.2)),
+                self._rim,
                 self._pointer,
             ])
         self._value_text = ft.Text(size=12, color=self.accent,
@@ -158,6 +170,7 @@ class Knob(ft.Column):
             content=self._canvas,
             mouse_cursor=ft.MouseCursor.RESIZE_UP_DOWN,
             drag_interval=20,           # client-side throttle (~50 ev/s)
+            on_tap=self._on_tap,
             on_pan_start=self._on_pan_start,
             on_pan_update=self._on_pan_update,
             on_pan_end=self._on_pan_end,
@@ -170,7 +183,10 @@ class Knob(ft.Column):
         self.tight = True
         self.horizontal_alignment = ft.CrossAxisAlignment.CENTER
         self.width = self.tile_width
-        self.controls = [self._gesture, self._value_text]
+        self._value_click = ft.GestureDetector(
+            content=self._value_text, mouse_cursor=ft.MouseCursor.CLICK,
+            on_tap=self._on_value_tap)
+        self.controls = [self._gesture, self._value_click]
         if self.label:
             # Fixed two-line box: knobs in a row keep the same height (and
             # line up when centred) whether their label wraps or not.
@@ -199,6 +215,49 @@ class Knob(ft.Column):
         self._push()
 
     # ------------------------------------------------------------- internals
+
+    @classmethod
+    def deselect(cls) -> None:
+        """Unselect the selected knob, if any (the arrow keys then do nothing)."""
+        knob, cls.selected = cls.selected, None
+        if knob is not None:
+            knob._show_selected(False)
+
+    @classmethod
+    def handle_key(cls, key: str) -> bool:
+        """Apply an arrow key to the selected knob: up / down by 1, right / left
+        by 10.
+
+        Args:
+            key: the key's name from the page's keyboard event (``"Arrow Up"``).
+        Returns:
+            Whether the key was used (a knob is selected, mounted and not being typed into).
+        """
+        knob = cls.selected
+        step = cls.KEY_STEPS.get(key.lower().replace(" ", "").replace("_", ""))
+        if knob is None or step is None or knob._prompting:
+            return False
+        try:
+            knob.page                       # raises once the knob has left the page
+        except RuntimeError:
+            cls.selected = None             # rebuilt meanwhile: this one is stale
+            return False
+        if knob._apply(knob.value + step):
+            knob._end()
+        return True
+
+    def _select(self) -> None:
+        """Make this the selected knob."""
+        if Knob.selected is not self:
+            Knob.deselect()
+            Knob.selected = self
+            self._show_selected(True)
+
+    def _show_selected(self, on: bool) -> None:
+        """Light (or dim) the rim that shows the selection."""
+        self._rim.paint.color = self.accent if on else theme.KNOB_RIM
+        self._rim.paint.stroke_width = 2.5 if on else 1.2
+        self._push()
 
     def _clamp(self, v: float) -> int:
         """Round ``v`` and clamp it to the knob's [min, max] range."""
@@ -251,6 +310,7 @@ class Knob(ft.Column):
     def _on_pan_start(self, e: ft.DragStartEvent) -> None:
         """Remember the travel and pointer position the drag starts from."""
         ft.context.disable_auto_update()
+        self._select()
         self._drag_t = value_to_t(self.value, self.min, self.max)
         self._drag_pos = e.local_position
 
@@ -294,8 +354,56 @@ class Knob(ft.Column):
         if steps and self._apply(self.value + steps * self.wheel_step):
             self._end()
 
+    def _on_tap(self, e=None) -> None:
+        """A click selects the knob."""
+        ft.context.disable_auto_update()
+        self._select()
+
     def _on_double_tap(self, e=None) -> None:
         """Reset the knob to ``default`` (the initial value if unset)."""
         ft.context.disable_auto_update()
+        self._select()
         if self.default is not None and self._apply(self.default):
             self._end()
+
+    def _on_value_tap(self, e=None) -> None:
+        """A click on the number asks for the value in a dialog."""
+        ft.context.disable_auto_update()
+        self._select()
+        self._prompt()
+
+    def _prompt(self) -> None:
+        """Dialog to type the value: Enter or OK sets it, within [min, max]."""
+        field = ft.TextField(value=str(self.value), autofocus=True, dense=True, width=140,
+                             keyboard_type=ft.KeyboardType.NUMBER,
+                             label=f"{self.label or 'Value'} ({self.min} to {self.max})")
+
+        def close(e=None) -> None:
+            self._prompting = False
+            self.page.pop_dialog()
+
+        def ok(e=None) -> None:
+            try:
+                value = int(str(field.value).strip())
+            except ValueError:
+                field.error_text = "A whole number"
+                field.update()
+                return
+            if not self.min <= value <= self.max:
+                field.error_text = f"{self.min} to {self.max}"
+                field.update()
+                return
+            close()
+            if self._apply(value):
+                self._end()
+
+        field.on_submit = ok
+        self._prompting = True
+        try:
+            self.page.show_dialog(ft.AlertDialog(
+                title=ft.Text(self.label or "Set the value"), content=field,
+                actions=[ft.TextButton("Cancel", on_click=close),
+                         ft.TextButton("OK", on_click=ok)],
+                on_dismiss=lambda e: setattr(self, "_prompting", False)))
+        except RuntimeError:
+            self._prompting = False         # not on a page

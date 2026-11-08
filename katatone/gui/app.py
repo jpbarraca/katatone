@@ -36,6 +36,7 @@ from . import compare_dialog, params_view as pv, theme
 from .history import EditHistory
 from .model import display_label
 from .headless import HeadlessPage
+from .knob import Knob
 from . import (library_pane, login, metronome_pane, midi_pane, patch_editor, setlist_pane,
                statusbar, system_pane)
 
@@ -1186,9 +1187,14 @@ class App:
     # ------------------------------------------------------------ undo / redo
 
     def _on_key(self, e: ft.KeyboardEvent) -> None:
-        """Ctrl+Z undoes and Ctrl+Shift+Z or Ctrl+Y redoes an edit, unless the
-        name field has the focus (it has its own undo)."""
-        if not (e.ctrl or e.meta) or self.editor.name_field_focused:
+        """Arrow keys turn the selected knob; Ctrl+Z undoes and Ctrl+Shift+Z or
+        Ctrl+Y redoes an edit.  Neither while the name field has the focus (it
+        has its own keys and undo)."""
+        if self.editor.name_field_focused:
+            return
+        if not (e.ctrl or e.meta):
+            if self._tab_index == TAB_ORDER.index(TAB_PATCH):
+                Knob.handle_key(e.key)
             return
         key = e.key.lower()
         if key == "z":
@@ -1548,6 +1554,7 @@ class App:
             e: the tab-change event (``e.control.selected_index``).
         """
         self._tab_index = e.control.selected_index
+        Knob.deselect()
         if self._tab_index == TAB_ORDER.index(TAB_SYSTEM):
             self._system_auto_done = False      # a new visit may try again after a failure
             self.maybe_load_system()

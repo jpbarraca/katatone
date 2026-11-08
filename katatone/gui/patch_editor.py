@@ -20,6 +20,7 @@ from ..liveset.tsl import LivesetFull, Tsl
 from ..library.store import LibraryFull
 from ..model.paramset import ParamSet
 from . import model, params_view as pv, theme
+from .knob import Knob
 
 if TYPE_CHECKING:
     from .app import App
@@ -126,6 +127,7 @@ class PatchEditor:
         """Ask which liveset to save the editor's patch into (an existing one
         or a new one) and append it there; the amp is not touched."""
         ft.context.disable_auto_update()
+        Knob.deselect()                     # the dialog has text fields: the arrows are theirs
         app = self.app
         names = [e.name for e in app.lib.list()]
         chosen = getattr(getattr(app, "library", None), "selected", None)
@@ -232,6 +234,8 @@ class PatchEditor:
         """Remember whether the name field has the focus, so that Ctrl+Z there
         is the field's own undo and not the editor's."""
         self.name_field_focused = focused
+        if focused:
+            Knob.deselect()                 # the arrow keys move the text cursor now
 
     def _on_name(self, e) -> None:
         """Name-field handler: encode the new name into the PATCH%COM block,
