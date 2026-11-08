@@ -21,6 +21,18 @@ class Param:
     min: int
     max: int
 
+    @property
+    def index(self) -> int:
+        """Where the parameter's bytes are in the block's data.
+
+        ``off`` is an address offset: a SysEx address byte holds 7 bits, so after 128 bytes the
+        address carries into the next byte and the offset jumps to the next multiple of 256.
+        The data has no such gaps (the 353 of an FX_DETAIL block are 225 bytes), so a parameter
+        at ``0x127`` is the byte at index ``128 + 0x27``.  Blocks shorter than 128 bytes are
+        unchanged.
+        """
+        return (self.off >> 8) * 128 + (self.off & 0x7F)
+
 
 @dataclass
 class Block:

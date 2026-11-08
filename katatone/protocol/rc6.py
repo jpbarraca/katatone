@@ -120,6 +120,16 @@ def nib_of_wire(w: int) -> int:
     return nibble(w & 0xFFFFFFFF)
 
 
+def from_nib(nib: int) -> int:
+    """Device memory index -> pre-nibble address (the inverse of :func:`nibble`).
+
+    Adding a byte count to a pre-nibble address does not carry past a 7-bit field (``0x7F + 1``
+    would set bit 7, which :func:`nibble` drops); add it to the memory index and come back here.
+    """
+    return (((nib & 0x0FE0_0000) << 3) | ((nib & 0x001F_C000) << 2)
+            | ((nib & 0x0000_3F80) << 1) | (nib & 0x7F))
+
+
 def nibble_le(x: int) -> int:
     """Little-endian nibble decode (``nibble_le``).
 

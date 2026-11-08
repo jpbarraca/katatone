@@ -168,3 +168,38 @@ def test_block_body_registers_every_value_widget_of_a_block() -> None:
     with pv.collect_widgets(reg):
         pv.block_body(_rows("AMP"), _noop)
     assert {k for k in reg if k[0] == "AMP"} == {("AMP", i) for i in range(10)}
+
+
+def test_a_parameter_past_the_first_128_bytes_is_found_by_its_data_index() -> None:
+    """The map's offsets are address offsets (they carry at 128), the amp's data has no gaps:
+    the 353 of an FX_DETAIL block are the 225 bytes the amp holds, and VIBRATO RATE at 0x127 is byte 167."""
+    from katatone.address.map import load_map
+    from katatone.gui import model
+    region = load_map()["PATCH(1)"]
+    detail = region.block("FX_DETAIL(1)")
+    assert max(p.index + p.size for p in detail.params) == 225
+    assert all(p.index == p.off for b in region.blocks if not b.name.startswith("FX_DETAIL") for p in b.params)
+    rate = next(i for i, p in enumerate(detail.params) if p.name.endswith("VIBRATO_RATE"))
+    assert detail.params[rate].off == 0x127 and detail.params[rate].index == 167
+
+    ps = ParamSet()
+    ps.set_block("PATCH%FX_DETAIL(1)", bytes(225))
+    for i, name in enumerate(("RATE", "DEPTH", "LEVEL")):
+        ps.set_param(region, "FX_DETAIL(1)", rate + i, 20 + i)
+    raw = ps.block("PATCH%FX_DETAIL(1)")
+    assert len(raw) == 225 and list(raw[167:170]) == [20, 21, 22]          # where the amp holds them
+    keys = model.fx_detail_groups(region, "FX_DETAIL(1)")
+    rows = model.fx_detail_rows(region, "FX_DETAIL(1)", keys.index("VIBRATO"), ps)
+    assert [r.value for r in rows if r.label in ("RATE", "DEPTH", "LEVEL")] == [20, 21, 22]
+
+
+def test_a_block_longer_than_one_message_is_sent_with_the_carry_in_its_address() -> None:
+    from katatone.address.map import load_map
+    from katatone.amp import write
+    from katatone.protocol import rc6
+    sent = []
+    t = types.SimpleNamespace(dt1=lambda addr, data: sent.append((addr, len(data))))
+    base = load_map()["PATCH"].block("FX_DETAIL(1)").base_addr
+    write._dt1_chunked(t, base, bytes(225))
+    assert sent == [(base, 128), (base + 0x100, 97)]                       # not base + 128: bit 7 is dropped
+    assert rc6.to_nib(sent[1][0]) == rc6.to_nib(base) + 128

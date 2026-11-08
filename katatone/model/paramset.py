@@ -111,7 +111,7 @@ class ParamSet:
             The display value (raw value minus the parameter's offset).
         """
         p = block.params[p_index]
-        return ParamSet.raw_value(p.size, raw[p.off:p.off + p.size]) - p.ofs
+        return ParamSet.raw_value(p.size, raw[p.index:p.index + p.size]) - p.ofs
 
     @staticmethod
     def encode(block: Block, raw: bytearray, p_index: int, value: int) -> None:
@@ -124,7 +124,7 @@ class ParamSet:
             value: the display value to store.
         """
         p = block.params[p_index]
-        raw[p.off:p.off + p.size] = ParamSet.raw_bytes(p.size, value + p.ofs)
+        raw[p.index:p.index + p.size] = ParamSet.raw_bytes(p.size, value + p.ofs)
 
     def get_param(self, region: Region, block_name: str, p_index: int) -> int:
         """Display value of one parameter of a block in a region.

@@ -43,14 +43,17 @@ def _dt1_chunked(t: Transport, addr: int, data: bytes) -> None:
     Args:
         t: the connected transport.
         addr: the starting address (pre-nibble); chunks are written at
-            addr + their byte offsets.
+            their byte offsets from it, counted in memory-index space.
         data: the full block payload.
     """
     off = 0
     n = len(data)
+    base = rc6.to_nib(addr)
     while off < n:
         chunk = data[off:off + DT1_CHUNK]
-        t.dt1(addr + off, chunk)
+        # The next chunk's address is found in memory-index space: a pre-nibble address plus 128
+        # would drop the carry out of its 7-bit field and land on the first chunk again.
+        t.dt1(rc6.from_nib(base + off), chunk)
         off += len(chunk)
 
 

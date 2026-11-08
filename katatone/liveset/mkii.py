@@ -76,7 +76,7 @@ def _defaults() -> dict[str, bytes]:
     for b in load_map()["PATCH"].blocks:
         raw = bytearray(DETAIL_LENGTH if b.name.startswith("FX_DETAIL") else b.length)
         for i, p in enumerate(b.params):
-            if isinstance(p.init, int) and p.off + p.size <= len(raw):
+            if isinstance(p.init, int) and p.index + p.size <= len(raw):
                 ParamSet.encode(b, raw, i, p.init)
         blocks["PATCH%" + b.name] = bytes(raw)
     return blocks
