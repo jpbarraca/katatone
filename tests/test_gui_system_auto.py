@@ -144,3 +144,23 @@ def test_the_system_read_waits_for_other_reads_on_the_wire(app, monkeypatch) -> 
         time.sleep(0.2)
         assert not done.is_set() and app.system_ps is None   # held back, wire untouched
     assert done.wait(2) and app.system_ps is not None
+
+
+def test_the_assign_tab_has_a_general_sub_tab_and_one_per_effect_in_two_lines(app) -> None:
+    from katatone.gui import patch_editor as pe
+    ed = pe.PatchEditor(app)
+    region = app.region_for(app.patch_number)
+    names = [b.name for b in region.blocks if b.name.startswith(("ASSIGN", "PATCH_KNOB"))]
+    view = ed._assign_view(region, names)
+    line1, line2, body = view.controls
+    chips = line1.controls + line2.controls
+    labels = [c.content.value for c in chips]
+    assert labels[:3] == ["GENERAL", "BOOSTER", "DELAY"] and len(labels) == 35
+    assert abs(len(line1.controls) - len(line2.controls)) <= 1      # two even lines
+    assert all(c.expand for c in chips)                              # they fill the width
+    general = body.content
+    assert chips[0].bgcolor and not chips[1].bgcolor                 # General is on show
+    chips[1].on_click(None)
+    assert body.content is not general and chips[1].bgcolor and not chips[0].bgcolor
+    chips[0].on_click(None)
+    assert body.content is general                                   # kept, not rebuilt

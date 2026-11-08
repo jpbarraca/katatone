@@ -381,6 +381,88 @@ def group_blocks(block_names: list[str]) -> list[tuple[str, list[str]]]:
 
 
 
+_ASSIGN_FN_RE = re.compile(
+    r"ASSIGN_(KNOBS|EXPPDL|GAFCEXPPDL(\d))(?:_(DETAIL|MIN|MAX|FUNC))?(?:\((\d)\))?$")
+
+
+def assign_function_label(block_name: str) -> str:
+    """What an ASSIGN block sets, e.g. 'ASSIGN_EXPPDL_MIN' -> 'Exp pedal min',
+    'ASSIGN_GAFCEXPPDL2_DETAIL(1)' -> 'GA-FC 1 · EXP 2 detail'."""
+    m = _ASSIGN_FN_RE.match(block_name.upper())
+    if m is None:
+        return friendly_block_label(block_name)
+    kind, pedal, part, unit = m.groups()
+    what = {"FUNC": "function"}.get(part or "", (part or "").lower())
+    if kind == "KNOBS":
+        return "Knob assign"
+    if kind == "EXPPDL":
+        return f"Exp pedal {what}".strip()
+    return f"GA-FC {unit or 1} · EXP {pedal} {what}".strip()
+
+
+def assign_functions(region: Region, ps: ParamSet, block_names: list[str]
+                     ) -> tuple[list[RowDesc], list[str]]:
+    """Collect the one-parameter ``*_FUNC`` blocks (what each pedal does) into
+    a single list of rows, so they can share one card.
+
+    Args:
+        region: the Region the blocks belong to.
+        ps: the loaded ParamSet supplying the values.
+        block_names: block names to pick from, in region order.
+
+    Returns:
+        ``(rows, rest)``: the FUNC rows, each labelled with its pedal, and the
+        block names that are not FUNC blocks.
+    """
+    rows: list[RowDesc] = []
+    rest: list[str] = []
+    for bname in block_names:
+        if bname.upper().split("(")[0].endswith("_FUNC"):
+            label = assign_function_label(bname)
+            rows += [dataclasses.replace(r, label=label)
+                     for r in row_for_block(region, bname, ps)]
+        else:
+            rest.append(bname)
+    return rows, rest
+
+
+def assign_by_effect(region: Region, ps: ParamSet, block_names: list[str]
+                     ) -> tuple[list[tuple[str, list[RowDesc]]], list[str]]:
+    """Regroup the ASSIGN blocks by the effect they assign, not by function.
+
+    The knob, expression pedal and GA-FC blocks each hold one parameter per
+    effect (Booster, Delay, ...); this collects, for each effect, its
+    parameter of every such block, so an effect's knob assign, pedal detail,
+    min and max sit together.
+
+    Args:
+        region: the Region the blocks belong to.
+        ps: the loaded ParamSet supplying the values.
+        block_names: the Assign tab's block names, in region order.
+
+    Returns:
+        ``(effects, rest)``: ``effects`` is ``[(effect title, rows)]`` in the
+        address table's effect order, each row labelled with its function;
+        ``rest`` are the blocks that have no per-effect parameters (the
+        footswitch and read-only ones), in their original order.
+    """
+    effects: dict[str, tuple[str, list[RowDesc]]] = {}
+    rest: list[str] = []
+    for bname in block_names:
+        prefix = "PRMID_PATCH_" + re.sub(r"\(\d\)$", "", bname.upper()) + "_"
+        rows = row_for_block(region, bname, ps)
+        if len(rows) <= 5 or not all(r.param.name.upper().startswith(prefix) for r in rows):
+            rest.append(bname)
+            continue
+        label = assign_function_label(bname)
+        for r in rows:
+            target = r.param.name[len(prefix):]      # AUTO_WAH here, AUTOWAH there
+            title, rows_ = effects.setdefault(target.replace("_", ""),
+                                              (target.replace("_", " ").title(), []))
+            rows_.append(dataclasses.replace(r, label=label))
+    return list(effects.values()), rest
+
+
 # ---------------------------------------------------------------------------
 # Katana effect variations (GREEN / RED / YELLOW) and FX detail filtering
 # ---------------------------------------------------------------------------

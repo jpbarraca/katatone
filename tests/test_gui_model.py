@@ -416,6 +416,61 @@ def test_the_amp_card_puts_its_checkboxes_and_the_amp_type_on_one_line() -> None
     assert PatchEditor._body_style("AMP") == "two_lines"
 
 
+def test_assign_blocks_are_regrouped_by_effect() -> None:
+    from katatone.address.map import load_map
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    names = [b.name for b in region.blocks if b.name.startswith(("ASSIGN", "PATCH_KNOB"))]
+    effects, rest = model.assign_by_effect(region, ParamSet(), names)
+    titles = [t for t, _ in effects]
+    assert titles[:3] == ["Booster", "Delay", "Reverb"] and len(titles) == 34
+    booster = dict(effects)["Booster"]
+    labels = [r.label for r in booster]
+    assert labels[:4] == ["Knob assign", "Exp pedal detail", "Exp pedal min", "Exp pedal max"]
+    assert "GA-FC 2 · EXP 3 max" in labels
+    assert all(r.param.name.endswith("_BOOSTER") for r in booster)
+    assert len(booster) == 4 + 2 * 3 * 3                   # pedal + 2 GA-FC x 3 pedals x 3
+    # nothing is lost: what is not per effect stays as its own blocks
+    assert "ASSIGN_FS" in rest and "ASSIGN_KNOBS" not in rest
+    per_effect = sum(len(rows) for _, rows in effects)
+    assert per_effect == 34 * len(booster)
+
+
+def test_the_pedal_function_blocks_share_one_card() -> None:
+    from katatone.address.map import load_map
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    names = [b.name for b in region.blocks if b.name.startswith(("ASSIGN", "PATCH_KNOB"))]
+    _, rest = model.assign_by_effect(region, ParamSet(), names)
+    rows, rest = model.assign_functions(region, ParamSet(), rest)
+    assert [r.label for r in rows] == [
+        "Exp pedal function", "GA-FC 1 · EXP 1 function", "GA-FC 2 · EXP 1 function",
+        "GA-FC 1 · EXP 2 function", "GA-FC 2 · EXP 2 function",
+        "GA-FC 1 · EXP 3 function", "GA-FC 2 · EXP 3 function"]
+    assert not any(n.endswith(("_FUNC", "_FUNC(1)", "_FUNC(2)")) for n in rest)
+    assert "ASSIGN_FS" in rest
+
+
+def test_the_gafc_footswitch_cards_are_half_width() -> None:
+    import types
+    from katatone.address.map import load_map
+    from katatone.gui import patch_editor as pe
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    ed = object.__new__(pe.PatchEditor)
+    ed.app = types.SimpleNamespace(ps=ParamSet())
+    ed._active_colors = {}
+    asked = {}
+    real = pe.PatchEditor._block_card
+    ed._block_card = lambda r, b, **kw: asked.setdefault(b, kw) and real(ed, r, b, **kw)
+    blocks = [b.name for b in region.blocks if b.name.startswith(("ASSIGN", "PATCH_KNOB"))]
+    ed._assign_cards(region, blocks)
+    assert asked["ASSIGN_GAFCFS(1)"] == asked["ASSIGN_GAFCFS(2)"] == {"wide": False}
+    assert asked["PATCH_KNOB_READONLY"] == asked["PATCH_KNOB_SOLO_DELAY_READONLY"] == {"wide": False}
+    assert asked["ASSIGN_FS"] == {"wide": True}              # a row of its own
+    card = real(ed, region, "ASSIGN_GAFCFS(1)", wide=False)
+    assert card.col == {"xs": 12, "lg": 6}
+
 
 def test_the_pitch_shifter_shows_direct_mix_then_voice_1_then_voice_2() -> None:
     from katatone.address.map import load_map
@@ -429,3 +484,51 @@ def test_the_pitch_shifter_shows_direct_mix_then_voice_1_then_voice_2() -> None:
     assert rows[0].label == "VOICE"                            # the selector stays first
     other = model.fx_detail_rows(region, "FX_DETAIL(1)", 0, ParamSet())
     assert [r.p_index for r in other] == sorted(r.p_index for r in other)   # others untouched
+
+
+def test_an_effects_assign_card_has_a_gap_between_pedal_and_gafc_rows() -> None:
+    import types
+    from katatone.address.map import load_map
+    from katatone.gui import patch_editor as pe
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    names = [b.name for b in region.blocks if b.name.startswith("ASSIGN")]
+    effects, _ = model.assign_by_effect(region, ParamSet(), names)
+    ed = object.__new__(pe.PatchEditor)
+    ed._set_param = lambda *a: None
+    card = ed._effect_card(*effects[0])
+    gaps = [c for c in _flatten(card) if getattr(c, "height", None) == pe._ASSIGN_GAP]
+    assert len(gaps) == 1
+
+
+def _flatten(c):
+    yield c
+    for attr in ("content", "controls"):
+        sub = getattr(c, attr, None)
+        for x in (sub if isinstance(sub, list) else [sub] if sub is not None else []):
+            yield from _flatten(x)
+
+
+def test_the_general_assign_cards_start_with_the_footswitch() -> None:
+    import types
+    from katatone.address.map import load_map
+    from katatone.gui import patch_editor as pe
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    ed = object.__new__(pe.PatchEditor)
+    ed.app = types.SimpleNamespace(ps=ParamSet())
+    ed._active_colors = {}
+    ed._set_param = lambda *a: None
+    names = [b.name for b in region.blocks if b.name.startswith(("ASSIGN", "PATCH_KNOB"))]
+    titles = [_titles(c)[0] for c in ed._assign_cards(region, names)]
+    assert titles == ["ASSIGN FS", "PEDAL FUNCTIONS", "ASSIGN GAFCFS 1", "ASSIGN GAFCFS 2",
+                      "PATCH KNOB READONLY", "PATCH KNOB SOLO DELAY READONLY"]
+
+
+def _titles(c):
+    out = [c.value] if type(c).__name__ == "Text" else []
+    for attr in ("content", "controls"):
+        sub = getattr(c, attr, None)
+        for x in (sub if isinstance(sub, list) else [sub] if sub is not None else []):
+            out += _titles(x)
+    return out

@@ -31,6 +31,8 @@ _TAB_HEIGHT = 40
 _DIVIDER_HEIGHT = 1
 _CONTENT_TOP = 12
 _ALIGN_NUDGE = 8      # measured by eye: Flutter adds a little around the tab row
+_ASSIGN_CHIP_HEIGHT = 30
+_ASSIGN_GAP = 14       # between the pedal and the GA-FC rows of an effect's Assign card
 _CARDS_TOP = _TAB_HEIGHT + _DIVIDER_HEIGHT + _CONTENT_TOP + _ALIGN_NUDGE
 
 
@@ -404,6 +406,12 @@ class PatchEditor:
             for r in model.row_for_block(region, "COLOR", self.app.ps)}
         label, blocks = self._tab_specs[i]
         layout = self._TAB_LAYOUTS.get(label)
+        if label == "Assign":
+            with pv.collect_widgets(self._widgets):
+                view = self._assign_view(region, blocks)
+            self._tab_view.controls[i].content = view
+            self._built.add(i)
+            return
         with pv.collect_widgets(self._widgets):
             if layout is None:
                 cards = [c for b in blocks
@@ -424,6 +432,91 @@ class PatchEditor:
         self._tab_view.controls[i].content = ft.Column(
             [content], scroll=ft.ScrollMode.AUTO, expand=True)
         self._built.add(i)
+
+    _ASSIGN_WIDTH = {"ASSIGN_FS": {"wide": True}, "ASSIGN_GAFCFS": {"wide": False},
+                     "PATCH_KNOB_READONLY": {"wide": False},
+                     "PATCH_KNOB_SOLO_DELAY_READONLY": {"wide": False}}
+
+    def _effect_card(self, title: str, rows: list) -> ft.Container:
+        """One effect's Assign card: the knob and pedal rows, a gap, then the
+        GA-FC rows (they would otherwise run on from the pedal's in one line)."""
+        pedal = [r for r in rows if not r.label.startswith("GA-FC")]
+        gafc = [r for r in rows if r.label.startswith("GA-FC")]
+        body = pv.block_body(pedal, self._set_param)
+        if body and gafc:
+            body.append(ft.Container(height=_ASSIGN_GAP))
+        body += pv.block_body(gafc, self._set_param)
+        return pv.module_card(title, body, wide=pv.is_wide(rows))
+
+    def _assign_cards(self, region, blocks: list[str]) -> list:
+        """The general Assign cards: the footswitch first, then what the pedals
+        do, the GA-FC footswitch and the read-only blocks (the per-effect
+        settings have a sub-tab each)."""
+        _, rest = model.assign_by_effect(region, self.app.ps, blocks)
+        funcs, rest = model.assign_functions(region, self.app.ps, rest)
+        # The footswitch block has a row to itself; the GA-FC footswitch and the
+        # read-only knob blocks are small: half width, side by side.
+        cards = {b: self._block_card(region, b, **self._ASSIGN_WIDTH.get(b.split("(")[0], {}))
+                 for b in rest}
+        first = [cards.pop("ASSIGN_FS", None), pv.block_card("Pedal functions", funcs,
+                                                              self._set_param)]
+        return [c for c in (*first, *cards.values()) if c is not None]
+
+    def _assign_page(self, cards: list) -> ft.Control:
+        """One Assign sub-tab's content: its cards, scrolling."""
+        return ft.Container(
+            ft.Column([pv.card_grid(cards)], scroll=ft.ScrollMode.AUTO, expand=True),
+            padding=ft.Padding(left=0, right=0, top=_CONTENT_TOP, bottom=4), expand=True)
+
+    def _assign_view(self, region, blocks: list[str]) -> ft.Control:
+        """The Assign tab: sub-tabs of general settings, then one per effect, in
+        two lines that together fill the width (a tab bar cannot wrap).  A page
+        is built when first shown, so an effect is a click away, not a scroll."""
+        effects, _ = model.assign_by_effect(region, self.app.ps, blocks)
+        pages = [("General", lambda: self._assign_cards(region, blocks))]
+        pages += [(title, lambda t=title, r=rows: [self._effect_card(t, r)])
+                  for title, rows in effects]
+        built: dict[int, ft.Control] = {}
+        body = ft.Container(expand=True)
+        chips: list[ft.Container] = []
+
+        def show(i: int) -> None:
+            if i not in built:
+                with pv.collect_widgets(self._widgets):
+                    built[i] = self._assign_page(pages[i][1]())
+            for j, chip in enumerate(chips):
+                self._style_chip(chip, j == i)
+            body.content = built[i]
+
+        def pick(i: int) -> None:
+            ft.context.disable_auto_update()
+            show(i)
+            try:
+                view.update()
+            except RuntimeError:
+                pass                        # not on the page yet
+
+        for i, (title, _) in enumerate(pages):
+            chips.append(ft.Container(
+                ft.Text(title.upper(), size=10, weight=ft.FontWeight.BOLD,
+                        no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+                        text_align=ft.TextAlign.CENTER),
+                expand=True, height=_ASSIGN_CHIP_HEIGHT, border_radius=4,
+                alignment=ft.Alignment.CENTER, tooltip=title,
+                padding=ft.Padding(left=2, right=2, top=0, bottom=0),
+                on_click=lambda e, i=i: pick(i)))
+        half = (len(chips) + 1) // 2
+        view = ft.Column([ft.Row(chips[:half], spacing=3), ft.Row(chips[half:], spacing=3),
+                          body], spacing=3, expand=True)
+        show(0)
+        return view
+
+    @staticmethod
+    def _style_chip(chip: ft.Container, active: bool) -> None:
+        """Highlight the sub-tab on show."""
+        chip.bgcolor = theme.TAB_ACTIVE if active else None
+        chip.content.color = theme.ACCENT if active else theme.MUTED
+        chip.border = ft.Border(bottom=ft.BorderSide(2, theme.ACCENT if active else "transparent"))
 
     @staticmethod
     def _present(cell, blocks) -> bool:
@@ -473,7 +566,7 @@ class PatchEditor:
         return dict(led=active, led_color=pv.COLOR_HEX[var],
                     badge="ACTIVE" if active else None)
 
-    def _block_card(self, region, bname: str):
+    def _block_card(self, region, bname: str, **card_kw):
         """One block's module card: `SW` becomes the Effects card, an
         `FX(n)` block the live FX card, `COLOR` is skipped (it is rendered
         inside the Effects card).
@@ -481,6 +574,7 @@ class PatchEditor:
         Args:
             region: the amp region of the selected patch.
             bname: the block name.
+            card_kw: passed on to the card (e.g. ``wide=False``).
 
         Returns:
             The card control, or `None` for blocks without their own card.
@@ -495,7 +589,7 @@ class PatchEditor:
         rows = model.row_for_block(region, bname, self.app.ps)
         return pv.block_card(model.block_title(bname), rows, self._set_param,
                              style=self._body_style(bname),
-                             **self._variation_kw(bname))
+                             **{**self._variation_kw(bname), **card_kw})
 
     def _fx_card(self, region, bname: str) -> ft.Control:
         """MOD / FX slot: TYPE selector + only the selected effect's params
