@@ -575,8 +575,12 @@ class PatchEditor:
     _COLOR_INDEX = {"BOOSTER": 0, "MOD": 1, "FX": 2, "DELAY": 3, "DELAY 2": 3,
                     "REVERB": 4}
 
+    # SW index of each effect slot's on/off switch (Delay 2 has its own, but shares the Delay's colour).
+    _SWITCH_INDEX = {"BOOSTER": 0, "MOD": 1, "FX": 2, "DELAY": 3, "DELAY 2": 4, "REVERB": 5}
+
     def _variation_kw(self, bname: str) -> dict:
-        """LED colour/state for a green/red/yellow effect variation card.
+        """LED colour/state for a green/red/yellow effect variation card: lit, and marked
+        ACTIVE, when the effect is switched on and this is the colour it plays.
 
         Returns:
             `led` / `led_color` / `badge` kwargs for `pv.module_card` (an
@@ -586,7 +590,9 @@ class PatchEditor:
         if v is None:
             return {}
         slot, var = v
-        active = self._active_colors.get(self._COLOR_INDEX.get(slot, -1)) == var
+        on = self.app.ps.get_param(self.app.region_for(self.app.patch_number), "SW",
+                                   self._SWITCH_INDEX[slot])
+        active = bool(on) and self._active_colors.get(self._COLOR_INDEX.get(slot, -1)) == var
         return dict(led=active, led_color=pv.COLOR_HEX[var],
                     badge="ACTIVE" if active else None)
 
@@ -665,6 +671,7 @@ class PatchEditor:
             if new_on != on:
                 self._set_param(sw[sw_label], int(new_on))
                 self.show_value("SW", sw[sw_label].p_index, int(new_on))
+                self._built = {self.tabs.selected_index}   # the effect cards' LEDs follow the switch
             draw()
             try:
                 shown.update()

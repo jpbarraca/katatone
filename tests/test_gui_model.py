@@ -771,3 +771,23 @@ def test_each_chain_dropdown_moves_only_its_own_element() -> None:
     pick("eq2", "AMP OUT")
     pick("sr", "POST REV")
     assert names() == [n.upper() for n in chain.order(0, 1, 1, 1, 1)]
+
+
+def test_a_delay_card_is_active_only_when_its_effect_is_switched_on_in_its_colour() -> None:
+    import types
+    from katatone.address.map import load_map
+    from katatone.gui import patch_editor as pe
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    ps = ParamSet()
+    ed = object.__new__(pe.PatchEditor)
+    ed.app = types.SimpleNamespace(ps=ps, region_for=lambda n: region, patch_number=0)
+    ed._active_colors = {3: 0}                                # the delays play their green variation
+    ps.set_param(region, "SW", 3, 1)                          # Delay 1 on, Delay 2 off
+    assert ed._variation_kw("DELAY(1)")["badge"] == "ACTIVE"   # Delay 1 green
+    assert ed._variation_kw("DELAY(4)")["badge"] is None       # Delay 2 green: switched off
+    assert ed._variation_kw("DELAY(2)")["badge"] is None       # Delay 1 red: not its colour
+    ps.set_param(region, "SW", 4, 1)                          # Delay 2 on
+    assert ed._variation_kw("DELAY(4)")["badge"] == "ACTIVE" and ed._variation_kw("DELAY(4)")["led"]
+    ps.set_param(region, "SW", 3, 0)                          # Delay 1 off
+    assert ed._variation_kw("DELAY(1)")["badge"] is None
