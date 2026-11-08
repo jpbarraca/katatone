@@ -4,6 +4,8 @@ Widgets are constructed but never mounted, so no Flet runtime is needed.
 """
 from __future__ import annotations
 
+import types
+
 import flet as ft
 
 from katatone.address.map import load_map
@@ -38,7 +40,7 @@ def _kinds(row: ft.Row) -> list[str]:
     for c in row.controls:
         if isinstance(c, Knob):
             out.append("knob")
-        elif isinstance(c, ft.Container) and isinstance(c.content, ft.Checkbox):
+        elif isinstance(c, pv.ToggleButton):
             out.append("switch")
         else:
             out.append("selector")
@@ -126,7 +128,7 @@ def test_knob_setter_moves_the_knob_without_firing_on_set() -> None:
     assert knob.value == 73 and calls == []
 
 
-def test_checkbox_setter_flips_the_box_and_its_dependents() -> None:
+def test_checkbox_setter_flips_the_button_and_its_dependents() -> None:
     """A footswitch toggling DELAY ticks the box and tells the colour picker."""
     toggled: list = []
     row = _row("SW", 3)
@@ -134,9 +136,9 @@ def test_checkbox_setter_flips_the_box_and_its_dependents() -> None:
         lambda cb: pv.checkbox(row, cb, on_toggle=toggled.append))
     (setter,) = reg[("SW", 3)]
     setter(1)
-    assert box.content.value is True and toggled == [True] and calls == []
+    assert box.value is True and toggled == [True] and calls == []
     setter(0)
-    assert box.content.value is False and toggled == [True, False]
+    assert box.value is False and toggled == [True, False]
 
 
 def test_combo_setter_selects_the_option_label() -> None:

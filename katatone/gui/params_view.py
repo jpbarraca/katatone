@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import threading
+import types
 from typing import Callable, Optional
 
 import flet as ft
@@ -119,13 +120,14 @@ def button(text: str, icon, on_click, primary: bool = False,
 class ToggleButton(ft.FilledButton):
     """A push button that stays pressed: amber while ``value`` is true, slate otherwise.
 
-    ``on_change(button)`` is called after a click has flipped ``value``.  Assigning ``value``
-    and calling ``update()`` redraws it.
+    ``on_change(e)`` is called after a click has flipped ``value``, with an event whose
+    ``control`` is the button (like the Flet checkbox it replaces).  Assigning ``value`` and
+    calling ``update()`` redraws it.
     """
 
     value: bool = False
     label: str = ""
-    on_change: Optional[Callable[["ToggleButton"], None]] = skip_field()
+    on_change: Optional[Callable[[object], None]] = skip_field()
 
     def init(self) -> None:
         """Draw the label and the state, and take the clicks."""
@@ -158,7 +160,7 @@ class ToggleButton(ft.FilledButton):
         except RuntimeError:
             pass                    # not on a page
         if self.on_change:
-            self.on_change(self)
+            self.on_change(types.SimpleNamespace(control=self))
 
 
 def link_button(text: str, on_click, color: str = theme.ACCENT) -> ft.TextButton:
@@ -203,8 +205,7 @@ def knob(row: model.RowDesc, on_set: OnSet) -> Knob:
 
 def checkbox(row: model.RowDesc, on_set: OnSet, label: Optional[str] = None,
              on_toggle: Optional[Callable[[bool], None]] = None) -> ft.Control:
-    """Labelled checkbox in a fixed-width box (a bare Flet Checkbox with a
-    label stretches to the full row, so several would never share a line).
+    """Labelled push button that stays pressed while the switch is on.
 
     Args:
         label: silk-screen label override (defaults to ``row.label``).
@@ -227,15 +228,9 @@ def checkbox(row: model.RowDesc, on_set: OnSet, label: Optional[str] = None,
             on_toggle(bool(v))
 
     text = (label or row.label).upper()
-    cb = ft.Checkbox(
-        value=bool(row.value), label=text,
-        label_style=ft.TextStyle(size=11, color=theme.LABEL,
-                                 weight=ft.FontWeight.W_600, letter_spacing=0.8),
-        active_color=theme.ACCENT, check_color=theme.BG,
-        border_side=ft.BorderSide(1.5, theme.KNOB_RIM),
-        on_change=changed)
+    cb = ToggleButton(value=bool(row.value), label=text, height=32, on_change=changed)
     _register(row, show)
-    return ft.Container(cb, width=48 + 8 * len(text))
+    return cb
 
 
 def select(row: model.RowDesc, on_set: OnSet) -> ft.Control:

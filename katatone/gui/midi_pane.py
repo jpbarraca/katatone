@@ -566,9 +566,9 @@ class _MidiPane:
                              on_submit=lambda e, m=m: self._relabel(m, e.control.value),
                              **pv.FIELD_STYLE)
         return ft.Row([
-            ft.Checkbox(value=m.enabled and not unknown, disabled=unknown,
-                        tooltip="Unsupported by this version" if unknown else "Enabled",
-                        on_change=lambda e, m=m: self._enabled(m, e.control.value)),
+            pv.ToggleButton(label="On", value=m.enabled and not unknown, disabled=unknown, height=32,
+                            tooltip="Unsupported by this version" if unknown else "Enabled",
+                            on_change=lambda e, m=m: self._enabled(m, e.control.value)),
             label,
             ft.Text(m.trigger.summary(), size=12, color=theme.MUTED, expand=2,
                     no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),

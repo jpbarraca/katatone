@@ -714,7 +714,7 @@ def test_groups_in_the_page_column_do_not_expand_so_they_stay_one_line_high(win)
 def test_the_display_and_match_switches_are_push_buttons_that_stay_pressed(win) -> None:
     from katatone.gui import params_view as pv, theme
     seen = []
-    t = pv.ToggleButton(label="X", value=False, on_change=lambda b: seen.append(b.value))
+    t = pv.ToggleButton(label="X", value=False, on_change=lambda e: seen.append(e.control.value))
     assert t.style.bgcolor == theme.TAB_ACTIVE
     t._clicked()
     assert t.value is True and seen == [True] and t.style.bgcolor == theme.ACCENT

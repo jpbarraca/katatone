@@ -200,8 +200,8 @@ class MappingDialog:
         self.threshold_field = ft.TextField(
             label="Threshold", value=str(t.threshold), width=110,
             input_filter=ft.NumbersOnlyInputFilter(), **pv.FIELD_STYLE)
-        self.repeat_cb = ft.Checkbox(
-            label="Fire on every message (pedal sends no release)", value=t.repeat,
+        self.repeat_cb = pv.ToggleButton(
+            label="Fire on every message (pedal sends no release)", value=t.repeat, height=32,
             on_change=lambda e: setattr(self.draft.trigger, "repeat", bool(e.control.value)))
 
     def _on_kind(self, kind: str) -> None:
@@ -407,8 +407,8 @@ class MappingDialog:
             field.visible = a.table is not None
             _push(field)
 
-        return [ft.Checkbox(label="Use the amp's own program-change table", value=a.table is None,
-                            on_change=use_default), field,
+        return [pv.ToggleButton(label="Use the amp's own program-change table", value=a.table is None,
+                                height=32, on_change=use_default), field,
                 ft.Text("A program whose channel this amp lacks is skipped with a message.",
                         size=11, color=theme.MUTED)]
 
@@ -471,8 +471,8 @@ class MappingDialog:
             fill_params(a.target.block)
         return [target_dd, block_dd, param_dd,
                 ft.Row([self._lo, self._hi,
-                        ft.Checkbox(label="Invert", value=a.invert,
-                                    on_change=lambda e: setattr(a, "invert", bool(e.control.value))),
+                        pv.ToggleButton(label="Invert", value=a.invert, height=32,
+                                        on_change=lambda e: setattr(a, "invert", bool(e.control.value))),
                         _dropdown("Curve", CURVES, a.curve, lambda k: setattr(a, "curve", k),
                                   width=160)],
                        spacing=10, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),

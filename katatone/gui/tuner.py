@@ -229,8 +229,8 @@ class TunerWindow:
             options=[ft.DropdownOption(key=k, text=k)
                      for k in (*pitch.TUNINGS, pitch.CHROMATIC)],
             on_select=lambda e: self._set_mode(), **pv.FIELD_STYLE)
-        self.intonation = ft.Checkbox(
-            label="Check intonation (12th fret)", value=False,
+        self.intonation = pv.ToggleButton(
+            label="Check intonation (12th fret)", value=False, height=32,
             tooltip=("Play the open string and tune it, then the same string at the 12th fret: "
                      "it should be exactly one octave higher. Both are recognised. Sharp: move "
                      "the saddle back (longer string); flat: move it forward (shorter)"),
@@ -253,8 +253,8 @@ class TunerWindow:
                                on_resize=self._resized)
         self.strings = ft.Row([], alignment=ft.MainAxisAlignment.CENTER, spacing=8, wrap=True)
         self.status = ft.Text("", size=12, color=theme.MUTED)
-        self.mute = ft.Checkbox(
-            label="Mute the amp while tuning", value=False, disabled=on_mute is None,
+        self.mute = pv.ToggleButton(
+            label="Mute the amp while tuning", value=False, disabled=on_mute is None, height=32,
             tooltip=("Mutes the amp's output; unchecking, stopping the tuner or closing "
                      "the window restores it" if on_mute else "No connection to the amp"),
             on_change=lambda e: self._set_mute(bool(self.mute.value)))
