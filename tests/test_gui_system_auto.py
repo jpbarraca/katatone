@@ -164,3 +164,18 @@ def test_the_assign_tab_has_a_general_sub_tab_and_one_per_effect_in_two_lines(ap
     assert body.content is not general and chips[1].bgcolor and not chips[0].bgcolor
     chips[0].on_click(None)
     assert body.content is general                                   # kept, not rebuilt
+
+
+def test_a_press_anywhere_on_the_interface_unselects_the_knob(app, monkeypatch) -> None:
+    import flet as ft
+    from katatone.gui.knob import Knob
+    added = []
+    monkeypatch.setattr(app.page, "add", lambda *c: added.extend(c), raising=False)
+    app._build()
+    root = added[-1]
+    assert isinstance(root, ft.GestureDetector) and root.expand
+    knob = Knob(value=5, min=0, max=10)
+    knob._select()
+    assert Knob.selected is knob
+    root.on_pan_down(None)
+    assert Knob.selected is None

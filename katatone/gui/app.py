@@ -250,12 +250,17 @@ class App:
                 ],
             ),
         )
-        p.add(ft.Column([
-            top,
-            tabs,
-            self.progress,
-            self.status_text,
-        ], spacing=8, expand=True))
+        # A pointer going down anywhere ends the knob selection (a knob selects itself
+        # when it is then tapped or dragged): the drag recognizer reports the press at
+        # once, even when a button or another control handles the click.
+        p.add(ft.GestureDetector(
+            content=ft.Column([
+                top,
+                tabs,
+                self.progress,
+                self.status_text,
+            ], spacing=8, expand=True),
+            on_pan_down=lambda e: Knob.deselect(), expand=True))
         self.refresh()
 
     # ------------------------------------------------------- browser sessions
