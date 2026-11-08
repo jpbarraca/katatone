@@ -591,3 +591,25 @@ def test_an_fx_card_has_the_type_on_one_line_and_the_knobs_on_the_next() -> None
     assert "Dropdown" in kinds(top) and "Knob" not in kinds(top)
     assert "Knob" in kinds(knobs) and "Dropdown" not in kinds(knobs)
     assert len([c for c in _flatten(knobs) if type(c).__name__ == "Knob"]) == 10
+
+
+def test_the_two_parametric_eq_cards_are_half_width() -> None:
+    import types
+    from katatone.address.map import load_map
+    from katatone.gui import patch_editor as pe
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    ed = object.__new__(pe.PatchEditor)
+    ed.app = types.SimpleNamespace(ps=ParamSet(), region_for=lambda n: region, patch_number=0)
+    ed._active_colors = {}
+    ed._set_param = lambda *a: None
+    ed._widgets = {}
+    names = [b.name for b in region.blocks if b.name.startswith("EQ")]
+    ed._tab_specs = [("EQ", names)]
+    ed._tab_view = types.SimpleNamespace(controls=[types.SimpleNamespace(content=None)])
+    ed._built = set()
+    ed._build_tab(0)
+    grid = ed._tab_view.controls[0].content.controls[0]
+    cols = [c.col["lg"] for c in grid.controls]
+    assert [cols[i] for i, n in enumerate(names) if n.startswith("EQ_PEQ")] == [6, 6]
+    assert [cols[i] for i, n in enumerate(names) if n.startswith("EQ_GE10")] == [12, 12]
