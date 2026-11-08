@@ -534,22 +534,10 @@ def _titles(c):
     return out
 
 
-def test_the_two_parametric_eq_cards_are_half_width() -> None:
-    import types
-    from katatone.address.map import load_map
+def test_the_eq_blocks_put_their_knobs_on_one_line() -> None:
     from katatone.gui import patch_editor as pe
-    from katatone.model.paramset import ParamSet
-    region = load_map()["PATCH(1)"]
-    ed = object.__new__(pe.PatchEditor)
-    ed.app = types.SimpleNamespace(ps=ParamSet(), region_for=lambda n: region, patch_number=0)
-    ed._active_colors = {}
-    ed._set_param = lambda *a: None
-    ed._widgets = {}
-    names = [b.name for b in region.blocks if b.name.startswith("EQ")]
-    ed._tab_specs = [("EQ", names)]
-    ed._tab_view = types.SimpleNamespace(controls=[types.SimpleNamespace(content=None)])
-    ed._built = set()
-    ed._build_tab(0)
-    grid = ed._tab_view.controls[0].content.controls[0]
-    cols = {i: c.col["lg"] for i, c in enumerate(grid.controls)}
-    assert [cols[i] for i, n in enumerate(names) if n.startswith("EQ_PEQ")] == [6, 6]
+    for name in ("EQ_PEQ(1)", "EQ_PEQ(2)", "EQ_GE10(1)", "EQ_GE10(2)"):
+        assert pe.PatchEditor._body_style(name) == "two_lines"
+    assert pe.PatchEditor._body_style("EQ_EACH(1)") == "rows"       # no knobs: unchanged
+    assert "EQ_PEQ" not in pe.PatchEditor._BLOCK_WIDTH             # and full width, not half
+

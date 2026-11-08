@@ -436,7 +436,7 @@ class PatchEditor:
         self._built.add(i)
 
     # Blocks whose card width is set by hand instead of by how many controls they hold.
-    _BLOCK_WIDTH = {"EQ_PEQ": {"wide": False}}
+    _BLOCK_WIDTH = {}
 
     _ASSIGN_WIDTH = {"ASSIGN_FS": {"wide": True}, "ASSIGN_GAFCFS": {"wide": False},
                      "PATCH_KNOB_READONLY": {"wide": False},
@@ -542,12 +542,14 @@ class PatchEditor:
     @staticmethod
     def _body_style(bname: str) -> str:
         """Per-block layout: one line for compact effect modules, a separate
-        switch line for the Solo blocks, the default three lines otherwise."""
+        switch line for the Solo blocks, selectors and then one line of knobs
+        for the AMP and EQ blocks, the default three lines otherwise."""
         if re.fullmatch(r"(BOOSTER|CONTOUR)\(\d\)", bname) or bname in (
                 "PEDALFX_COM", "NS", "SENDRETURN", "CONTOUR_COM", "SOLO_COM"):
             return "inline"
-        if bname in ("SOLO_EQ", "AMP"):
-            return "two_lines"           # AMP: the variations sit left of the amp type
+        if bname in ("SOLO_EQ", "AMP") or re.fullmatch(r"EQ_(PEQ|GE10)\(\d\)", bname):
+            return "two_lines"           # AMP: the variations sit left of the amp type;
+                                         # EQ: the selectors, then all the knobs on a line
         if bname.startswith("SOLO_"):
             return "switch_row"
         return "rows"
