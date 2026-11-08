@@ -124,7 +124,7 @@ class _Page:
         self.window = types.SimpleNamespace()
         self.threads = []
 
-    def add(self, *c): pass
+    def add(self, *c): self.added = list(c)
     def update(self, *a, **k): pass
     def run_task(self, fn, *a, **k): pass
     def run_thread(self, fn, *a): fn(*a)
@@ -133,6 +133,7 @@ class _Page:
 @pytest.fixture
 def win(monkeypatch):
     monkeypatch.setattr(an, "list_input_devices", lambda: [])
+    monkeypatch.setattr(an, "list_output_devices", lambda: [])
     return an.Analyzer(_Page())
 
 
@@ -399,3 +400,336 @@ def test_double_clicking_the_divider_resets_the_height(win) -> None:
     win._set_lower_height(300)
     win.divider.on_double_tap(None)
     assert win.lower_box.height == an.LOWER_DEFAULT
+
+
+class _FakePlayer:
+    """Stands in for the ReferencePlayer: records how it was asked to play."""
+    made = []
+
+    def __init__(self, samples, device, start, on_block, on_end, on_error):
+        self.samples, self.device, self.offset, self.seconds = samples, device, start, len(samples) / 48000
+        self.on_block, self.on_end, self.on_error = on_block, on_end, on_error
+        self.position, self.running, self.stopped, self.sought = start, False, False, []
+        _FakePlayer.made.append(self)
+
+    def start(self, at=None):
+        self.running = True
+        if at is not None:
+            self.position = at
+
+    def pause(self):
+        self.running = False
+
+    def seek(self, seconds):
+        self.position = seconds
+        self.sought.append(seconds)
+
+    def stop(self):
+        self.running, self.stopped = False, True
+
+
+def _play_ref(win, tmp_path, monkeypatch, name="play.wav"):
+    monkeypatch.setattr(an, "ReferencePlayer", _FakePlayer)
+    _FakePlayer.made.clear()
+    p = tmp_path / name
+    _wav(p)
+    win._ref_path = str(p)
+    win._toggle_play()
+    return _FakePlayer.made[-1]
+
+
+def test_playing_without_a_reference_asks_for_one(win) -> None:
+    win._toggle_play()
+    assert win.player is None and "Load a reference" in win.status.value
+
+
+def test_playing_the_reference_feeds_the_display_and_stops_the_input(win, tmp_path, monkeypatch) -> None:
+    stopped = []
+    win.capture = types.SimpleNamespace(stop=lambda: stopped.append(1))
+    player = _play_ref(win, tmp_path, monkeypatch)
+    assert player.running and win.player is player and stopped == [1] and win.capture is None
+    assert win.play_btn.content.value == "Pause" and player.seconds == pytest.approx(4.0)
+    blocks_before = len(win.history._buf) if hasattr(win.history, "_buf") else 0
+    player.on_block(np.full(1024, 0.2, np.float32))              # what the player thread does
+    assert win._peak_acc == pytest.approx(0.2)                    # the meter and the spectrum get it
+    player.position = 1.5
+    win._tick()
+    assert win.play_pos.value == "0:01 / 0:04" or win.play_pos.value.startswith("0:01")
+    assert win.status.value != "Stopped."                         # it counts as listening
+
+
+def test_the_range_chosen_is_the_part_that_is_played(win, tmp_path, monkeypatch) -> None:
+    win.ref_start.value, win.ref_stop.value = "1", "3"
+    player = _play_ref(win, tmp_path, monkeypatch)
+    assert player.offset == 1.0 and player.seconds == pytest.approx(2.0)
+
+
+def test_the_button_pauses_and_resumes_and_the_input_stays_off(win, tmp_path, monkeypatch) -> None:
+    win.capture = types.SimpleNamespace(stop=lambda: None)
+    restarted = []
+    monkeypatch.setattr(win, "_start", lambda: restarted.append(1))
+    player = _play_ref(win, tmp_path, monkeypatch)
+    win._toggle_play()                                           # pause
+    assert win.player is player and not player.running and not player.stopped and restarted == []
+    assert win.play_btn.content.value == "Play"
+    win._toggle_play()                                           # resume
+    assert player.running and win.play_btn.content.value == "Pause"
+
+
+def test_the_time_slider_covers_the_part_and_follows_the_playing(win, tmp_path, monkeypatch) -> None:
+    p = tmp_path / "ref.wav"
+    _wav(p, seconds=10)
+    win.ref_start.value, win.ref_stop.value = "2", "8"
+    win._load_reference(str(p), 2.0, 8.0)
+    win._apply_loaded()
+    s = win.play_slider
+    assert not s.disabled and (s.min, s.max) == (2.0, 8.0) and s.value == 2.0
+    monkeypatch.setattr(an, "ReferencePlayer", _FakePlayer)
+    win._toggle_play()
+    player = _FakePlayer.made[-1]
+    player.position = 5.0
+    win._tick()
+    assert s.value == 5.0 and win.play_pos.value == "0:05 / 0:08"
+    win._scrubbing = True                                        # while it is dragged the playing does not move it
+    player.position = 6.0
+    win._tick()
+    assert s.value == 5.0
+
+
+def test_releasing_the_slider_seeks_now_or_when_play_is_pressed(win, tmp_path, monkeypatch) -> None:
+    p = tmp_path / "ref.wav"
+    _wav(p, seconds=10)
+    win._load_reference(str(p))
+    win._apply_loaded()
+    win._seek(4.0)                                               # nothing playing: remembered
+    assert win._seek_to == 4.0
+    player = _play_ref(win, tmp_path, monkeypatch, name="ref.wav")
+    assert player.position == 4.0 and win._seek_to is None       # Play begins where the slider was left
+    win._seek(7.5)
+    assert player.sought == [7.5] and not win._scrubbing
+
+
+def test_clearing_the_reference_disables_the_slider(win, tmp_path) -> None:
+    p = tmp_path / "ref.wav"
+    _wav(p)
+    win._load_reference(str(p))
+    win._apply_loaded()
+    win._clear_reference()
+    assert win.play_slider.disabled
+
+
+def _texts(c):
+    out = [c.value] if type(c).__name__ == "Text" else []
+    for attr in ("content", "controls"):
+        sub = getattr(c, attr, None)
+        for x in (sub if isinstance(sub, list) else [sub] if sub is not None else []):
+            out += _texts(x)
+    return out
+
+
+def test_the_controls_are_in_named_groups(win) -> None:
+    titles = [t for t in _texts(win.page.added[0]) if t in ("INPUT", "OUTPUT", "REFERENCE", "COMPARE", "DISPLAY")]
+    assert titles == ["INPUT", "OUTPUT", "REFERENCE", "COMPARE", "DISPLAY"]
+
+
+def test_a_reference_that_plays_to_its_end_is_closed_on_the_next_frame(win, tmp_path, monkeypatch) -> None:
+    player = _play_ref(win, tmp_path, monkeypatch)
+    player.on_end()                                               # the player thread says it is over
+    win._tick()
+    assert win.player is None and win.play_btn.content.value == "Play" and player.stopped
+
+
+def test_a_failing_output_is_reported(win, tmp_path, monkeypatch) -> None:
+    player = _play_ref(win, tmp_path, monkeypatch)
+    player.on_error("no such device")
+    win._tick()
+    assert win.player is None and "no such device" in win.status.value
+
+
+def test_starting_to_listen_stops_the_playing(win, tmp_path, monkeypatch) -> None:
+    player = _play_ref(win, tmp_path, monkeypatch)
+    monkeypatch.setattr(an, "Capture", lambda *a, **k: types.SimpleNamespace(start=lambda: None, stop=lambda: None))
+    win.device.value = "hw:0"
+    win._start()
+    assert player.stopped and win.player is None
+
+
+def test_the_player_writes_stereo_blocks_and_reports_each_block_and_the_end(monkeypatch) -> None:
+    import subprocess as sp
+    from katatone.audio import refplayer as rp
+
+    written = []
+
+    class Proc:
+        def __init__(self, cmd, **kw):
+            self.cmd = cmd
+            self.stdin = types.SimpleNamespace(write=written.append, flush=lambda: None,
+                                               close=lambda: None, fileno=lambda: 0)
+            self.stderr = types.SimpleNamespace(read=lambda: b"", close=lambda: None)
+
+        def wait(self, timeout=None): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    monkeypatch.setattr(sp, "Popen", Proc)
+    monkeypatch.setattr(rp.fcntl, "fcntl", lambda *a: None)
+    samples = np.linspace(-1, 1, 2500).astype(np.float32)
+    seen, ended = [], []
+    pl = rp.ReferencePlayer(samples, "hw:1", 2.0, on_block=lambda b: seen.append(len(b)),
+                            on_end=lambda: ended.append(1))
+    pl.start()
+    pl._thread.join(2)
+    assert seen == [1024, 1024, 452] and ended == [1] and not pl.running
+    data = np.frombuffer(b"".join(written), np.float32).reshape(-1, 2)
+    assert len(data) == 2500 and (data[:, 0] == data[:, 1]).all()          # mono on both channels
+    assert pl.position == pytest.approx(2.0)                 # played out: back at the start
+
+
+def test_the_player_begins_where_it_is_told_and_goes_back_to_the_top_when_played_out(monkeypatch) -> None:
+    import subprocess as sp
+    from katatone.audio import refplayer as rp
+
+    class Proc:
+        def __init__(self, cmd, **kw):
+            self.stdin = types.SimpleNamespace(write=lambda b: None, flush=lambda: None,
+                                               close=lambda: None, fileno=lambda: 0)
+            self.stderr = types.SimpleNamespace(read=lambda: b"", close=lambda: None)
+
+        def wait(self, timeout=None): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    monkeypatch.setattr(sp, "Popen", Proc)
+    monkeypatch.setattr(rp.fcntl, "fcntl", lambda *a: None)
+    seen, ended = [], []
+    pl = rp.ReferencePlayer(np.zeros(2500, np.float32), "hw:1", 2.0,
+                            on_block=lambda b: seen.append(len(b)), on_end=lambda: ended.append(1))
+    pl.seek(2.0 + 1024 / 48000)                                  # not playing: only moves the place
+    assert not pl.running and pl.position == pytest.approx(2.0 + 1024 / 48000) and seen == []
+    pl.start()
+    pl._thread.join(2)
+    assert seen == [1024, 452] and ended == [1]                  # began at the second block
+    assert pl.position == pytest.approx(2.0)                     # played out: back at the top
+    pl.start(at=100.0)                                           # beyond the end is kept inside
+    pl._thread.join(2)
+    assert seen[2:] == []                                        # nothing left to play there
+
+
+def test_no_wrapping_row_holds_a_control_that_expands_or_a_bare_checkbox(win) -> None:
+    """Flet draws nothing (a black window) when a wrapping row holds a control that expands."""
+    import flet as ft
+
+    def walk(c):
+        yield c
+        for attr in ("content", "controls"):
+            sub = getattr(c, attr, None)
+            for x in (sub if isinstance(sub, list) else [sub] if sub is not None else []):
+                yield from walk(x)
+
+    bad = [type(ch).__name__ for row in walk(win.page.added[0]) if isinstance(row, ft.Row) and row.wrap
+           for ch in row.controls if getattr(ch, "expand", None) or isinstance(ch, ft.Checkbox)]
+    assert bad == []
+
+
+def test_no_row_stretches_its_children_in_the_unbounded_height_of_the_page(win) -> None:
+    """A row that stretches its children inside the page's column gives them an infinite
+    height: Flutter then reports an invalid matrix and the window stays black."""
+    import flet as ft
+
+    def walk(c):
+        yield c
+        for attr in ("content", "controls"):
+            sub = getattr(c, attr, None)
+            for x in (sub if isinstance(sub, list) else [sub] if sub is not None else []):
+                yield from walk(x)
+
+    page_column = win.page.added[0]
+    stretching = [r for r in walk(page_column) if isinstance(r, ft.Row)
+                  and r.vertical_alignment == ft.CrossAxisAlignment.STRETCH]
+    assert stretching == []
+
+
+def test_playback_is_in_the_reference_group_and_the_display_switches_are_beside_the_log(win) -> None:
+    import flet as ft
+
+    def walk(c):
+        yield c
+        for attr in ("content", "controls"):
+            sub = getattr(c, attr, None)
+            for x in (sub if isinstance(sub, list) else [sub] if sub is not None else []):
+                yield from walk(x)
+
+    groups = [c for c in walk(win.page.added[0]) if isinstance(c, ft.Container) and isinstance(c.content, ft.Row)
+              and c.content.controls and type(c.content.controls[0]).__name__ == "Text"
+              and c.content.controls[0].value == "REFERENCE"]
+    inside = list(walk(groups[0]))
+    assert win.play_btn in inside and win.play_slider in inside and win.play_pos in inside
+    bottom = next(r for r in walk(win.page.added[0]) if isinstance(r, ft.Row)
+                  and any(c.content is win.hints for c in r.controls if isinstance(c, ft.Container)))
+    log, display = bottom.controls
+    assert log.expand == display.expand == 1                     # half width each
+    shown = list(walk(display))
+    assert win.scale in shown and win.show_strings in shown and win.show_zones in shown
+
+
+def test_the_controls_above_the_charts_are_compact(win) -> None:
+    for b in (win.toggle, win.clear, win.ref_btn, win.play_btn, win.take_a, win.take_b, win.apply_btn, win.tap_btn):
+        assert b.height == an.CONTROL_HEIGHT
+    for f in (win.device, win.channel, win.play_out, win.compare_dd, win.eq_preview, win.lower):
+        assert f.content_padding.top <= 4 and f.content_padding.bottom <= 4
+    for f in (win.ref_start, win.ref_stop):                  # the time boxes keep a normal line height
+        assert f.content_padding.top >= 8 and f.content_padding.bottom >= 8
+    assert win.compare_dd.width == 300
+
+
+def test_every_group_above_the_charts_is_one_line(win) -> None:
+    import flet as ft
+
+    def walk(c):
+        yield c
+        for attr in ("content", "controls"):
+            sub = getattr(c, attr, None)
+            for x in (sub if isinstance(sub, list) else [sub] if sub is not None else []):
+                yield from walk(x)
+
+    rows = [c.content for c in walk(win.page.added[0]) if isinstance(c, ft.Container)
+            and isinstance(c.content, ft.Row) and c.content.controls
+            and type(c.content.controls[0]).__name__ == "Text"
+            and c.content.controls[0].value in ("INPUT", "OUTPUT", "REFERENCE", "COMPARE")]
+    assert len(rows) == 4 and not any(r.wrap for r in rows)
+    fixed = sum(c.width for c in rows[3].controls if isinstance(getattr(c, "width", None), (int, float)))
+    assert fixed < 900                  # the fixed widths of COMPARE leave room for its buttons
+
+
+def test_groups_in_the_page_column_do_not_expand_so_they_stay_one_line_high(win) -> None:
+    """In a column, ``expand`` shares the height with the charts: the groups would grow tall and empty."""
+    import flet as ft
+    column = win.page.added[0]
+    for child in column.controls[1:3]:                  # REFERENCE and COMPARE
+        assert isinstance(child, ft.Container) and not child.expand
+    top = column.controls[0]                            # INPUT | OUTPUT: they share the width
+    assert [c.expand for c in top.controls] == [3, 2]
+
+
+def test_the_display_and_match_switches_are_push_buttons_that_stay_pressed(win) -> None:
+    from katatone.gui import params_view as pv, theme
+    seen = []
+    t = pv.ToggleButton(label="X", value=False, on_change=lambda b: seen.append(b.value))
+    assert t.style.bgcolor == theme.TAB_ACTIVE
+    t._clicked()
+    assert t.value is True and seen == [True] and t.style.bgcolor == theme.ACCENT
+    t._clicked()
+    assert t.value is False and seen == [True, False] and t.style.bgcolor == theme.TAB_ACTIVE
+    for b in (win.scale, win.show_strings, win.show_zones, win.match):
+        assert isinstance(b, pv.ToggleButton) and b.height == an.CONTROL_HEIGHT
+    assert win.match.value is True and win.match.style.bgcolor == theme.ACCENT       # pressed from the start
+    assert win.scale.value is False
+
+
+def test_pressing_a_display_button_changes_the_display(win) -> None:
+    win.scale._clicked()                                   # linear frequency axis
+    assert win.linear is True
+    win.show_zones._clicked()
+    assert win.show_zones.value is True
+    win.match._clicked()
+    assert win.cmp.match_level is False

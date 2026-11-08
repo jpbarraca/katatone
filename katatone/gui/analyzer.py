@@ -23,7 +23,8 @@ import numpy as np
 
 from ..audio import bands, comparison, content, dsp, envelope, reference
 from ..audio.capture import RATE, Capture, CaptureError
-from ..audio.devices import list_input_devices, preferred
+from ..audio.devices import list_input_devices, list_output_devices, preferred
+from ..audio.refplayer import ReferencePlayer
 from . import files, params_view as pv, plot, theme
 
 FPS = 15
@@ -53,6 +54,7 @@ SG_MIN_DB, SG_MAX_DB = -100.0, -20.0
 #: The lower panel's height in pixels: the start value and the range the divider allows, and
 #: the least height kept for the spectrum above it.
 LOWER_DEFAULT, LOWER_MIN, LOWER_MAX, SPEC_MIN_HEIGHT = 120.0, 60.0, 600.0, 120.0
+CONTROL_HEIGHT = 32        # buttons above the charts (the default is 40)
 PREVIEW_COLOR = "#ff8a65"
 EQ_KINDS = {"off": "Off", "GE-10": "Graphic EQ (GE-10)", "PEQ": "Parametric EQ (PEQ)"}
 LOWER_PANELS = {"diff": "Difference", "sg": "Spectrogram"}
@@ -159,6 +161,10 @@ class Analyzer:
         self._peak_acc = 0.0
         self._clipped = False
         self.capture: Capture | None = None
+        self.player: ReferencePlayer | None = None     # the reference being played, if any
+        self._resume = False            # listening was on when the playing began: go back to it
+        self._play_done = False         # player thread: the reference has played to its end
+        self._play_failed = ""          # player thread: why the output stopped
         self._error = ""
         self._running = True
         self._warned = False
@@ -199,24 +205,24 @@ class Analyzer:
         self.toggle = pv.button("Stop", ft.Icons.STOP, lambda e: self._toggle(),
                                 primary=True)
         self.clear = pv.button("Clear", ft.Icons.CLEAR_ALL, lambda e: self._clear())
-        self.scale = ft.Checkbox(
-            label="Linear frequency scale", value=False,
-            tooltip="Off: logarithmic, 20 Hz to 20 kHz (default); on: linear, 20 Hz to 10 kHz",
-            on_change=lambda e: self._set_scale())
-        self.show_strings = ft.Checkbox(
-            label="Guitar strings", value=False,
+        self.scale = pv.ToggleButton(
+            label="Linear scale", value=False, height=CONTROL_HEIGHT,
+            tooltip="Off: logarithmic frequency axis, 20 Hz to 20 kHz (default); on: linear, 20 Hz to 10 kHz",
+            on_change=lambda b: self._set_scale())
+        self.show_strings = pv.ToggleButton(
+            label="Guitar strings", value=False, height=CONTROL_HEIGHT,
             tooltip="Each string in standard tuning, sloping from its open note (E2 A2 D3 G3 B3 E4) "
                     f"up to its highest note at fret {bands.FRETS}",
-            on_change=lambda e: self._draw_spectrum_grid())
-        self.show_zones = ft.Checkbox(
-            label="Tone zones", value=False,
+            on_change=lambda b: self._draw_spectrum_grid())
+        self.show_zones = pv.ToggleButton(
+            label="Tone zones", value=False, height=CONTROL_HEIGHT,
             tooltip="Typical ranges of muddy, boxy, airy ... sounds (approximate)",
-            on_change=lambda e: self._draw_spectrum_grid())
+            on_change=lambda b: self._draw_spectrum_grid())
         self.status = ft.Text("", size=12, color=theme.MUTED)
         # ---- comparing: a reference recording, takes A and B, tap tempo ----
         self.ref_btn = pv.button("Reference…", ft.Icons.AUDIO_FILE, self._pick_reference)
         self.ref_label = ft.Text("no reference", size=12, color=theme.MUTED, no_wrap=True,
-                                 overflow=ft.TextOverflow.ELLIPSIS, width=170)
+                                 overflow=ft.TextOverflow.ELLIPSIS, width=150)
         self.ref_clear = ft.IconButton(ft.Icons.CLOSE, icon_size=16, tooltip="Remove the reference",
                                        on_click=lambda e: self._clear_reference())
         # Which part of the file is the reference: m:ss or seconds; empty = the whole file.
@@ -228,11 +234,26 @@ class Analyzer:
         self.ref_stop = ft.TextField(label="To", hint_text="end", width=84, value="", tooltip=tip,
                                      on_submit=self._range_changed, on_blur=self._range_changed,
                                      **pv.FIELD_STYLE)
-        self.match = ft.Checkbox(
-            label="Match level", value=True,
+        # Play the reference (the part chosen above) and watch it on the display.
+        self.play_btn = pv.button("Play", ft.Icons.PLAY_ARROW, lambda e: self._toggle_play())
+        self.play_btn.tooltip = "Play or pause the reference (the From - To part) and watch it on the display"
+        self.play_out = ft.Dropdown(label="Play on", expand=True, value="default",
+                                    options=[ft.DropdownOption(key="default", text="default")],
+                                    **pv.FIELD_STYLE)
+        self.play_pos = ft.Text("", size=12, color=theme.MUTED, width=100, text_align=ft.TextAlign.RIGHT)
+        self.play_slider = ft.Slider(min=0, max=1, value=0, disabled=True, expand=True,
+                                     active_color=theme.ACCENT,
+                                     on_change_start=lambda e: setattr(self, "_scrubbing", True),
+                                     on_change=lambda e: self._scrub(e.control.value),
+                                     on_change_end=lambda e: self._seek(e.control.value))
+        self._scrubbing = False         # the slider is being dragged: the playing does not move it
+        self._seek_to: float | None = None      # where to begin when Play is pressed
+        threading.Thread(target=self._load_outputs, daemon=True).start()
+        self.match = pv.ToggleButton(
+            label="Match level", value=True, height=CONTROL_HEIGHT,
             tooltip="Line the reference and the takes up with your level, so only the "
                     "tone is compared, not the loudness",
-            on_change=lambda e: self._set_match())
+            on_change=lambda b: self._set_match())
         self.take_a = pv.button("Set A", ft.Icons.CAMERA, lambda e: self._capture("A"))
         self.take_b = pv.button("Set B", ft.Icons.CAMERA, lambda e: self._capture("B"))
         self.compare_dd = ft.Dropdown(
@@ -284,18 +305,17 @@ class Analyzer:
         self.spec = ft.Stack([self.spec_grid, self.spec_img], expand=True)
         self.diff = ft.Stack([self.diff_grid, self.diff_img], expand=True)
         self.lower_box = ft.Container(self.diff, height=LOWER_DEFAULT)   # holds the lower panel
+        self._compact()
         page.add(ft.Column([
-            ft.Container(ft.Row([self.device, self.channel, self.toggle, self.clear],
-                                spacing=8,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                         padding=ft.Padding(left=0, right=0, top=8, bottom=0)),
-            ft.Row([self.scale, self.show_strings, self.show_zones], spacing=16,
-                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ft.Row([self.ref_btn, self.ref_label, self.ref_clear, self.ref_start, self.ref_stop,
-                    ft.Container(self.match, width=140),       # a bare labelled Checkbox fills the row
-                    self.take_a, self.take_b, self.compare_dd, self.eq_preview, self.apply_btn, self.lower,
-                    self.tap_btn, self.tap_label],
-                   spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Row([self._group("INPUT", [self.device, self.channel, self.toggle, self.clear], 3),
+                    self._group("OUTPUT", [self.play_out], 2)], spacing=8,
+                   vertical_alignment=ft.CrossAxisAlignment.START),
+            self._group("REFERENCE", [self.ref_btn, self.ref_label, self.ref_clear, self.ref_start,
+                                      self.ref_stop, self.play_btn, self.play_slider, self.play_pos]),
+            self._group("COMPARE", [
+                self.compare_dd, self.match,
+                self.take_a, self.take_b, self.eq_preview, self.apply_btn, self.lower,
+                self.tap_btn]),
             ft.Row([
                 ft.Container(ft.Column([self.meter, self.readout], spacing=6,
                                        horizontal_alignment=ft.CrossAxisAlignment.CENTER),
@@ -308,16 +328,57 @@ class Analyzer:
                              expand=True, padding=8, bgcolor=theme.KNOB_LO,
                              border=ft.Border.all(1, theme.PANEL_EDGE), border_radius=6),
             ], expand=True, spacing=12),
-            ft.Container(self.hints, height=150, padding=8, bgcolor=theme.KNOB_LO,
-                         border=ft.Border.all(1, theme.PANEL_EDGE), border_radius=6),
-            self.status,
-        ], expand=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
+            ft.Row([
+                ft.Container(self.hints, height=150, padding=8, bgcolor=theme.KNOB_LO, expand=1,
+                             border=ft.Border.all(1, theme.PANEL_EDGE), border_radius=6),
+                ft.Container(ft.Column([
+                    ft.Text("DISPLAY", size=10, weight=ft.FontWeight.BOLD, color=theme.MUTED),
+                    ft.Row([self.scale, self.show_strings, self.show_zones], spacing=6, wrap=True,
+                           run_spacing=6)], spacing=6, tight=True),
+                    height=150, padding=ft.Padding(left=8, right=8, top=6, bottom=4), expand=1,
+                    border=ft.Border.all(1, theme.PANEL_EDGE), border_radius=6),
+            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.START),
+            ft.Row([ft.Container(self.status, expand=True), self.tap_label], spacing=8),
+        ], expand=True, spacing=6, horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
         self._draw_meter_grid()
         self._draw_spectrum_grid()
         self._draw_diff_grid()
         self._refresh_hints(np.full(len(self.spectrum.freqs), dsp.FLOOR_DB), False, force=True)
         self._start()
         page.run_task(self._loop)
+
+    def _compact(self) -> None:
+        """Make the rows of controls above the charts as low as they can be, to leave the
+        height to the charts: tighter fields (their label sits on the border) and lower buttons."""
+        for field in (self.device, self.channel, self.play_out, self.compare_dd, self.eq_preview,
+                      self.lower):
+            field.content_padding = ft.Padding(left=10, right=6, top=2, bottom=2)
+        # The time boxes keep a normal line height: their text is clipped when they are lower.
+        for field in (self.ref_start, self.ref_stop):
+            field.content_padding = ft.Padding(left=10, right=6, top=8, bottom=8)
+        self.compare_dd.width, self.eq_preview.width, self.lower.width = 300, 140, 120
+        for button in (self.toggle, self.clear, self.ref_btn, self.play_btn, self.take_a,
+                       self.take_b, self.apply_btn, self.tap_btn):
+            button.height = CONTROL_HEIGHT
+
+    @staticmethod
+    def _group(title: str, controls: list, expand: int | None = None, wrap: bool = False) -> ft.Container:
+        """A framed group of controls with its name in front, sharing a row with others.
+
+        Args:
+            title: the group's name.
+            controls: what it holds.
+            expand: its share of the row it is in; None outside a row (in a column an expanding
+                control would share the height with the charts, and so grow tall and empty).
+            wrap: let the controls flow onto more lines; not with a control that expands (Flet
+                cannot size an expanding control in a wrapping row, and draws nothing).
+        """
+        return ft.Container(
+            ft.Row([ft.Text(title, size=10, weight=ft.FontWeight.BOLD, color=theme.MUTED, width=74),
+                    *controls], spacing=8, wrap=wrap, run_spacing=2,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding(left=8, right=8, top=2, bottom=2), **({"expand": expand} if expand else {}),
+            border=ft.Border.all(1, theme.PANEL_EDGE), border_radius=6)
 
     # ------------------------------------------------------------ capture
 
@@ -334,6 +395,8 @@ class Analyzer:
 
     def _start(self) -> None:
         """Start listening to the chosen device and channel."""
+        if self.player is not None:
+            self._stop_play(resume=False)
         self._stop()
         name = self.device.value
         if not name:
@@ -350,6 +413,128 @@ class Analyzer:
         self.capture = cap
         self.toggle.content = ft.Text("Stop", no_wrap=True)
         self.toggle.icon = ft.Icons.STOP
+
+    def _load_outputs(self) -> None:
+        """Thread: list the sound card outputs (slow) and offer them for playing the reference."""
+        devices = list_output_devices()
+        if not devices:
+            return
+        names = [d.name for d in devices]
+        self.play_out.options = [ft.DropdownOption(key=d.name, text=d.label) for d in devices]
+        if self.play_out.value not in names:
+            self.play_out.value = "default" if "default" in names else names[0]
+        try:
+            self.play_out.page              # raises until the dropdown is on the page
+        except RuntimeError:
+            return                          # it shows the new options when it gets there
+        self.play_out.update()
+
+    def _toggle_play(self) -> None:
+        """Play / Pause button of the reference."""
+        player = self.player
+        if player is not None:
+            if player.running:
+                player.pause()
+                self._play_button(False)
+                self._say("Paused.")
+            else:
+                try:
+                    player.start()
+                except OSError as ex:
+                    self._say(f"Cannot play: {ex}", error=True)
+                    return
+                self._play_button(True)
+            return
+        if self._ref_path is None:
+            self._say("Load a reference first.", error=True)
+            return
+        try:
+            start, stop = self._range()
+        except ValueError as ex:
+            self._say(str(ex), error=True)
+            return
+        self.play_btn.content = ft.Text("Loading…", no_wrap=True)
+        self._update(self.play_btn)
+        self.page.run_thread(self._start_play, self._ref_path, start, stop,
+                             self.play_out.value or "default")
+
+    def _scrub(self, seconds: float) -> None:
+        """The slider is being dragged: show the time it points at."""
+        total = self.play_slider.max
+        self.play_pos.value = f"{reference.format_time(seconds)} / {reference.format_time(total)}"
+        self._update(self.play_pos)
+
+    def _seek(self, seconds: float) -> None:
+        """The slider was released: go there (now if playing, else when Play is pressed)."""
+        self._scrubbing = False
+        if self.player is not None:
+            self.player.seek(seconds)
+        else:
+            self._seek_to = float(seconds)
+        self._scrub(seconds)
+
+    def _set_slider(self, lo: float, hi: float, value: float | None = None) -> None:
+        """Give the time slider the range of the part of the reference (disabled without one)."""
+        usable = hi > lo
+        self.play_slider.min, self.play_slider.max = (lo, hi) if usable else (0, 1)
+        self.play_slider.value = min(max(lo if value is None else value, lo), hi) if usable else 0
+        self.play_slider.disabled = not usable
+        self._update(self.play_slider)
+
+    def _start_play(self, path: str, start: float, stop: float | None, device: str) -> None:
+        """Worker: read the part of the file, stop listening to the input (the display now
+        follows the reference) and start playing it."""
+        try:
+            samples = reference.load_audio(path, RATE, start, stop)
+            player = ReferencePlayer(samples, device, start, self._on_block,
+                                     lambda: setattr(self, "_play_done", True),
+                                     lambda msg: setattr(self, "_play_failed", msg))
+            self._resume = self.capture is not None
+            self._stop()
+            at, self._seek_to = self._seek_to, None
+            player.start(at)
+        except Exception as ex:                       # noqa: BLE001
+            self._load_error = f"Cannot play: {ex}"
+            self._play_button(False)
+            if self._resume:
+                self._resume = False
+                self._start()
+            return
+        self._clear()
+        self._error = ""
+        self.player = player
+        self._play_button(True)
+
+    def _play_button(self, playing: bool) -> None:
+        """Show Pause (while playing) or Play on the reference's button."""
+        self.play_btn.content = ft.Text("Pause" if playing else "Play", no_wrap=True)
+        self.play_btn.icon = ft.Icons.PAUSE if playing else ft.Icons.PLAY_ARROW
+        self._update(self.play_btn)
+
+    def _stop_play(self, resume: bool = True, error: str = "") -> None:
+        """Stop playing the reference; listen to the input again if it was on before.
+
+        Args:
+            resume: go back to listening if it was on when the playing began.
+            error: why the playing stopped, if it did not end by itself or by the button.
+        """
+        player, self.player = self.player, None
+        self._play_done, self._play_failed = False, ""
+        if player is not None:
+            player.stop()
+        self._play_button(False)
+        self.play_pos.value = ""
+        self._update(self.play_pos)
+        held = self.cmp.reference
+        if held is not None:
+            self._set_slider(held.start, held.start + held.seconds)
+        if error:
+            self._say(error, error=True)
+        if resume and self._resume:
+            self._resume = False
+            self._start()
+            self._push_controls()
+        self._resume = False
 
     def _stop(self) -> None:
         """Stop listening."""
@@ -440,7 +625,14 @@ class Analyzer:
 
     def _tick(self) -> None:
         """Compute levels and the spectrum and redraw both canvases."""
-        listening = self.capture is not None and not self._error
+        if self.player is not None and (self._play_done or self._play_failed):
+            self._stop_play(error=self._play_failed)
+        listening = (self.capture is not None
+                     or (self.player is not None and self.player.running)) and not self._error
+        if self.player is not None and not self._scrubbing:
+            self._set_slider(self.player.offset, self.player.offset + self.player.seconds,
+                             self.player.position)
+            self._scrub(self.player.position)
         with self.lock:
             peak_lin, self._peak_acc = self._peak_acc, 0.0
             if listening:
@@ -736,6 +928,9 @@ class Analyzer:
             self.ref_label.color = theme.FOREGROUND
             if loaded.bpm > 0 and loaded.bpm_confidence >= reference.PULSE_CONFIDENCE:
                 self.tap_label.value = f"{loaded.bpm:.0f} BPM from the reference"
+            if self.player is None:
+                self._set_slider(loaded.start, loaded.start + loaded.seconds)
+                self._seek_to = None
             for c in (self.ref_label, self.compare_dd, self.tap_label):
                 self._update(c)
             self._refresh_hints(np.full(len(self.spectrum.freqs), dsp.FLOOR_DB), False, force=True)
@@ -757,6 +952,7 @@ class Analyzer:
         """Forget the reference."""
         self.cmp.reference = None
         self._ref_path = None
+        self._set_slider(0, 0)
         self.ref_label.value, self.ref_label.color = "no reference", theme.MUTED
         self._update(self.ref_label)
 
@@ -858,8 +1054,9 @@ class Analyzer:
         self._update(self.tap_label)
 
     def close(self) -> None:
-        """Stop the loops and the capture."""
+        """Stop the loops, the capture and the playing."""
         self._running = False
+        self._stop_play(resume=False)
         self._stop()
 
 

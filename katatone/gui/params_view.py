@@ -19,6 +19,7 @@ import threading
 from typing import Callable, Optional
 
 import flet as ft
+from flet.controls.base_control import skip_field
 
 from . import model, theme
 from .knob import Knob
@@ -112,6 +113,52 @@ def button(text: str, icon, on_click, primary: bool = False,
             color=theme.BG if primary else theme.FOREGROUND,
             padding=ft.Padding(left=12, right=14, top=0, bottom=0),
             shape=ft.RoundedRectangleBorder(radius=6)))
+
+
+@ft.control(isolated=True)
+class ToggleButton(ft.FilledButton):
+    """A push button that stays pressed: amber while ``value`` is true, slate otherwise.
+
+    ``on_change(button)`` is called after a click has flipped ``value``.  Assigning ``value``
+    and calling ``update()`` redraws it.
+    """
+
+    value: bool = False
+    label: str = ""
+    on_change: Optional[Callable[["ToggleButton"], None]] = skip_field()
+
+    def init(self) -> None:
+        """Draw the label and the state, and take the clicks."""
+        super().init()
+        self.content = ft.Text(self.label, no_wrap=True, size=13)
+        self.on_click = self._clicked
+        self._paint()
+
+    def before_update(self) -> None:
+        """Redraw the state before the control is serialized."""
+        super().before_update()
+        self._paint()
+
+    def _paint(self) -> None:
+        """Pressed: the accent colour; released: the slate of the other buttons."""
+        on = bool(self.value)
+        self.style = ft.ButtonStyle(
+            bgcolor=theme.ACCENT if on else theme.TAB_ACTIVE,
+            color=theme.BG if on else theme.FOREGROUND,
+            padding=ft.Padding(left=12, right=12, top=0, bottom=0),
+            shape=ft.RoundedRectangleBorder(radius=6))
+
+    def _clicked(self, e=None) -> None:
+        """Flip the state and tell the owner."""
+        ft.context.disable_auto_update()
+        self.value = not self.value
+        self._paint()
+        try:
+            self.update()
+        except RuntimeError:
+            pass                    # not on a page
+        if self.on_change:
+            self.on_change(self)
 
 
 def link_button(text: str, on_click, color: str = theme.ACCENT) -> ft.TextButton:
