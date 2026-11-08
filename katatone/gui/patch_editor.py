@@ -415,7 +415,9 @@ class PatchEditor:
         with pv.collect_widgets(self._widgets):
             if layout is None:
                 cards = [c for b in blocks
-                         if (c := self._block_card(region, b)) is not None]
+                         if (c := self._block_card(
+                             region, b, **self._BLOCK_WIDTH.get(b.split("(")[0], {})))
+                         is not None]
                 content = pv.card_grid(cards)
             else:
                 # Explicit grid; blocks the layout does not mention go last.
@@ -432,6 +434,9 @@ class PatchEditor:
         self._tab_view.controls[i].content = ft.Column(
             [content], scroll=ft.ScrollMode.AUTO, expand=True)
         self._built.add(i)
+
+    # Blocks whose card width is set by hand instead of by how many controls they hold.
+    _BLOCK_WIDTH = {"EQ_PEQ": {"wide": False}}
 
     _ASSIGN_WIDTH = {"ASSIGN_FS": {"wide": True}, "ASSIGN_GAFCFS": {"wide": False},
                      "PATCH_KNOB_READONLY": {"wide": False},

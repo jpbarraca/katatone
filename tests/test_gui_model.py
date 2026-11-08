@@ -532,3 +532,24 @@ def _titles(c):
         for x in (sub if isinstance(sub, list) else [sub] if sub is not None else []):
             out += _titles(x)
     return out
+
+
+def test_the_two_parametric_eq_cards_are_half_width() -> None:
+    import types
+    from katatone.address.map import load_map
+    from katatone.gui import patch_editor as pe
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    ed = object.__new__(pe.PatchEditor)
+    ed.app = types.SimpleNamespace(ps=ParamSet(), region_for=lambda n: region, patch_number=0)
+    ed._active_colors = {}
+    ed._set_param = lambda *a: None
+    ed._widgets = {}
+    names = [b.name for b in region.blocks if b.name.startswith("EQ")]
+    ed._tab_specs = [("EQ", names)]
+    ed._tab_view = types.SimpleNamespace(controls=[types.SimpleNamespace(content=None)])
+    ed._built = set()
+    ed._build_tab(0)
+    grid = ed._tab_view.controls[0].content.controls[0]
+    cols = {i: c.col["lg"] for i, c in enumerate(grid.controls)}
+    assert [cols[i] for i, n in enumerate(names) if n.startswith("EQ_PEQ")] == [6, 6]
