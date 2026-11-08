@@ -415,9 +415,7 @@ class PatchEditor:
         with pv.collect_widgets(self._widgets):
             if layout is None:
                 cards = [c for b in blocks
-                         if (c := self._block_card(
-                             region, b, **self._BLOCK_WIDTH.get(b.split("(")[0], {})))
-                         is not None]
+                         if (c := self._block_card(region, b)) is not None]
                 content = pv.card_grid(cards)
             else:
                 # Explicit grid; blocks the layout does not mention go last.
@@ -434,9 +432,6 @@ class PatchEditor:
         self._tab_view.controls[i].content = ft.Column(
             [content], scroll=ft.ScrollMode.AUTO, expand=True)
         self._built.add(i)
-
-    # Blocks whose card width is set by hand instead of by how many controls they hold.
-    _BLOCK_WIDTH = {"DELAY": {"wide": False}}
 
     _ASSIGN_WIDTH = {"ASSIGN_FS": {"wide": True}, "ASSIGN_GAFCFS": {"wide": False},
                      "PATCH_KNOB_READONLY": {"wide": False},
@@ -537,6 +532,10 @@ class PatchEditor:
         "Contour": [["CONTOUR_COM", "CONTOUR(1)"],
                     ["CONTOUR(2)", "CONTOUR(3)"]],
         "Pedal": [["PEDALFX_COM"], ["PEDALFX"]],
+        # DELAY(1..3) / (4..6) are Delay 1 / Delay 2 in green, red, yellow:
+        # one colour per line, the two delays side by side.
+        "Delay": [["DELAY(1)", "DELAY(4)"], ["DELAY(2)", "DELAY(5)"],
+                  ["DELAY(3)", "DELAY(6)"]],
     }
 
     @staticmethod

@@ -539,11 +539,10 @@ def test_the_eq_blocks_put_their_knobs_on_one_line() -> None:
     for name in ("EQ_PEQ(1)", "EQ_PEQ(2)", "EQ_GE10(1)", "EQ_GE10(2)"):
         assert pe.PatchEditor._body_style(name) == "two_lines"
     assert pe.PatchEditor._body_style("EQ_EACH(1)") == "rows"       # no knobs: unchanged
-    assert "EQ_PEQ" not in pe.PatchEditor._BLOCK_WIDTH             # and full width, not half
 
 
 
-def test_every_delay_card_is_half_width() -> None:
+def test_the_delay_cards_pair_the_two_delays_colour_by_colour() -> None:
     import types
     from katatone.address.map import load_map
     from katatone.gui import patch_editor as pe
@@ -559,5 +558,10 @@ def test_every_delay_card_is_half_width() -> None:
     ed._tab_view = types.SimpleNamespace(controls=[types.SimpleNamespace(content=None)])
     ed._built = set()
     ed._build_tab(0)
-    grid = ed._tab_view.controls[0].content.controls[0]
-    assert len(names) == 6 and [c.col["lg"] for c in grid.controls] == [6] * 6
+    layout = pe.PatchEditor._TAB_LAYOUTS["Delay"]
+    assert len(layout) == 3 and all(len(row) == 2 for row in layout)
+    for first, second in layout:                            # the same colour on a line
+        assert model.block_variation(first)[1] == model.block_variation(second)[1]
+        assert model.block_variation(first)[0] == "DELAY" and model.block_variation(second)[0] == "DELAY 2"
+    rows = ed._tab_view.controls[0].content.controls[0].controls
+    assert len(rows) == 3 and all(len(r.controls) == 2 for r in rows)
