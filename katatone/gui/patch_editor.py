@@ -436,7 +436,7 @@ class PatchEditor:
         self._built.add(i)
 
     # Blocks whose card width is set by hand instead of by how many controls they hold.
-    _BLOCK_WIDTH = {}
+    _BLOCK_WIDTH = {"DELAY": {"wide": False}}
 
     _ASSIGN_WIDTH = {"ASSIGN_FS": {"wide": True}, "ASSIGN_GAFCFS": {"wide": False},
                      "PATCH_KNOB_READONLY": {"wide": False},
