@@ -602,27 +602,32 @@ class PatchEditor:
         (from the matching FX_DETAIL block), swapped live on TYPE change."""
         detail = bname.replace("FX(", "FX_DETAIL(")
         type_row = model.row_for_block(region, bname, self.app.ps)[0]
-        # One line: TYPE, the effect's switches/selectors, then its knobs.
-        # The TYPE dropdown stays put; only the widgets after it are swapped.
+        # Two lines: TYPE with the effect's switches and selectors, then its
+        # knobs.  The TYPE dropdown stays put; only the widgets after it are swapped.
         type_dd = None
-        line = pv.inline_row([])
+        top = pv.inline_row([])
+        knobs_line = pv.wrap_row([], spacing=6)
+        lines = ft.Column([top, knobs_line], spacing=10, tight=True)
 
         def fill(fx_type: int) -> None:
-            """Rebuild the line with the TYPE selector plus the params of
+            """Rebuild the lines with the TYPE selector plus the params of
             effect type `fx_type`."""
             rows = model.fx_detail_rows(region, detail, fx_type, self.app.ps)
-            line.controls = [type_dd, *pv.inline_widgets(rows, self._set_param)]
+            switches, selectors, knobs = pv.block_widgets(rows, self._set_param)
+            top.controls = [type_dd, *switches, *selectors]
+            knobs_line.controls = knobs
+            knobs_line.visible = bool(knobs)
 
         def on_type(row: model.RowDesc, v: int) -> None:
             """TYPE selector callback: store the new type and swap in that
             effect's widgets."""
             self._set_param(row, v)
             fill(v)
-            line.update()
+            lines.update()
 
         type_dd = pv.select(type_row, on_type)
         fill(int(type_row.value))
-        return pv.module_card(model.block_title(bname), [line], wide=True,
+        return pv.module_card(model.block_title(bname), [lines], wide=True,
                               **self._variation_kw(bname))
 
     def _effects_card(self, region) -> ft.Control:

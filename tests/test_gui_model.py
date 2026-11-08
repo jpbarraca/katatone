@@ -565,3 +565,29 @@ def test_the_delay_cards_pair_the_two_delays_colour_by_colour() -> None:
         assert model.block_variation(first)[0] == "DELAY" and model.block_variation(second)[0] == "DELAY 2"
     rows = ed._tab_view.controls[0].content.controls[0].controls
     assert len(rows) == 3 and all(len(r.controls) == 2 for r in rows)
+
+
+def test_an_fx_card_has_the_type_on_one_line_and_the_knobs_on_the_next() -> None:
+    import types
+    import flet as ft
+    from katatone.address.map import load_map
+    from katatone.gui import patch_editor as pe
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    ps = ParamSet()
+    ed = object.__new__(pe.PatchEditor)
+    ed.app = types.SimpleNamespace(ps=ps, region_for=lambda n: region, patch_number=0)
+    ed._active_colors = {}
+    ed._set_param = lambda *a: None
+    ed._widgets = {}
+    keys = model.fx_detail_groups(region, "FX_DETAIL(1)")
+    ps.set_param(region, "FX(4)", 0, keys.index("PITCHSHIFT"))
+    card = ed._fx_card(region, "FX(4)")
+    column = next(c for c in _flatten(card)
+                  if isinstance(c, ft.Column) and len(c.controls) == 2
+                  and all(isinstance(x, ft.Row) for x in c.controls))
+    top, knobs = column.controls
+    kinds = lambda row: {type(c).__name__ for c in _flatten(row)}      # noqa: E731
+    assert "Dropdown" in kinds(top) and "Knob" not in kinds(top)
+    assert "Knob" in kinds(knobs) and "Dropdown" not in kinds(knobs)
+    assert len([c for c in _flatten(knobs) if type(c).__name__ == "Knob"]) == 10
