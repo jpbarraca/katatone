@@ -115,3 +115,20 @@ def test_a_parameter_that_cannot_be_read_keeps_its_saved_value(app, monkeypatch)
     ps.set_param(REGION, block, index, 10)
     monkeypatch.setattr(amp_write, "read_param", lambda *a: (_ for _ in ()).throw(TimeoutError("no answer")))
     assert app._take_pedal_values(1, ps) == 0 and ps.get_param(REGION, block, index) == 10
+
+
+def test_the_spellings_of_the_amps_choices_find_their_parameters() -> None:
+    """Found on a real patch: the pitch shifter's pitch is chosen as "PS1:PITCH"."""
+    ps = ParamSet()
+    keys = model.fx_detail_groups(REGION, "FX_DETAIL(4)")
+    ps.set_param(REGION, "FX(4)", 0, keys.index("PITCHSHIFT"))
+    choices = pedal._choices()["PITCHSHIFTER"]
+    _assign(ps, "ASSIGN_EXPPDL_FUNC", "ASSIGN_EXPPDL_DETAIL", 6, "PITCHSHIFTER", choices.index("PS1:PITCH"))
+    (block, index), = pedal.targets(ps, REGION)
+    assert block == "FX_DETAIL(4)" and _name(block, index) == "PITCH1"
+    _assign(ps, "ASSIGN_EXPPDL_FUNC", "ASSIGN_EXPPDL_DETAIL", 6, "PITCHSHIFTER", choices.index("PS2:PRE DELAY"))
+    (block, index), = pedal.targets(ps, REGION)
+    assert _name(block, index) == "DELAY2"                                       # PRE_DELAY2
+    _assign(ps, "ASSIGN_EXPPDL_FUNC", "ASSIGN_EXPPDL_DETAIL", 4, "BOOSTER", pedal._choices()["BOOSTER"].index("DIRECT MIX"))
+    (block, index), = pedal.targets(ps, REGION)
+    assert block == "BOOSTER(1)" and _name(block, index) == "MIX"                  # not "DIRECT LEVEL"

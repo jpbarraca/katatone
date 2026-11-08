@@ -33,9 +33,22 @@ _TYPE_ALIASES = {"PITCHSHIFT": "PITCHSHIFTER", "ACPROCESS": "ACPROCESSOR", "AWAH
                  "PEDALWAH": "PEDAL_WAH", "ACSIM": "ACGUITARSIM", "EPHASER": "PHASE90E",
                  "EFLANGER": "FLANGER117E", "EWAH": "WAH95E", "HEAVYOCTAVE": "HEAVYOCT",
                  "BEND": "PEDALBEND", "2X2CHORUS": "CHORUS"}
-#: A choice's wording -> the label of the parameter in the editor.
+#: A choice's wording -> the label of the parameter in the editor (the choice's own wording is
+#: tried too: "DIRECT MIX" is "DIRECT LEVEL" for the delay and the reverb only).
 _LABEL_ALIASES = {"DELAY TIME": "TIME", "REVERB TIME": "TIME", "DIRECT MIX": "DIRECT LEVEL",
-                  "SOLO SW": "SOLO"}
+                  "SOLO SW": "SOLO", "CROSSOVER FREQUENCY": "XOVER FREQUENCY",
+                  "ECHO INTENSITY": "ECHO INTENSISTY", "PEDAL POS": "PEDAL POSITION"}
+
+
+def _spellings(choice: str) -> list[str]:
+    """The ways the editor may spell a choice, best first: its alias, "PS1:PITCH" as
+    "PITCH1" (a voice's parameters carry its number), then the choice itself."""
+    out = [_LABEL_ALIASES.get(choice, choice)]
+    voice = re.fullmatch(r"(?:PS|HR)(\d):(.+)", choice)
+    if voice:
+        out.insert(0, voice.group(2) + voice.group(1))
+    out.append(choice)
+    return [_norm(x) for x in out]
 
 
 def _norm(text: str) -> str:
@@ -90,8 +103,8 @@ def targets(ps: ParamSet, region: Region) -> list[tuple[str, int]]:
         names = _choices()[key]
         if not 0 < index < len(names):                  # 0 is PRESET: the pedal drives none
             continue
-        wanted = _norm(_LABEL_ALIASES.get(names[index], names[index]))
-        row = next((r for r in rows if _norm(r.label) == wanted), None)
+        wanted = _spellings(names[index])
+        row = next((r for w in wanted for r in rows if _norm(r.label) == w), None)
         if row is not None and (row.block, row.p_index) not in found:
             found.append((row.block, row.p_index))
     return found
