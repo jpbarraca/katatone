@@ -11,6 +11,7 @@ generated entirely from the static address table.
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import dataclasses
 import re
 
 import flet as ft
@@ -20,6 +21,7 @@ from ..liveset.tsl import LivesetFull, Tsl
 from ..library.store import LibraryFull
 from ..model.paramset import ParamSet
 from . import model, params_view as pv, theme
+from . import chain
 from .knob import Knob
 
 if TYPE_CHECKING:
@@ -433,11 +435,15 @@ class PatchEditor:
                          for c in row if self._present(c, blocks)]
                         for row in layout]
                 rows += [[card(b)] for b in blocks
-                         if b not in named and b != "COLOR"]
+                         if b not in named and b not in ("COLOR", "NS", "SW")]
                 content = pv.card_rows(rows)
         self._tab_view.controls[i].content = ft.Column(
             [content], scroll=ft.ScrollMode.AUTO, expand=True)
         self._built.add(i)
+
+    # The noise suppressor's rows, named for the AMP card it now shares.
+    _NS_LABELS = {"Enable": "Noise Suppressor", "THRESHOLD": "NS Threshold",
+                  "RELEASE": "NS Release"}
 
     # Blocks whose card width is set by hand instead of by how many controls they hold.
     _BLOCK_WIDTH = {"EQ_PEQ": {"wide": False}}
@@ -537,7 +543,9 @@ class PatchEditor:
     # Explicit card grids (rows of equal-height cards).  "SW" is the Effects
     # card; a nested list stacks cards in one column.
     _TAB_LAYOUTS = {
-        "Amp": [["AMP"], ["SW", ["OTHER", "NS"]], ["SENDRETURN"]],
+        # OTHER shows the chain card; the AMP card holds OTHER's other settings and NS.
+        # SW (the effects switches) is not a card: the chain diagram switches the effects.
+        "Amp": [["AMP"], ["OTHER"], ["SENDRETURN"]],
         "Contour": [["CONTOUR_COM", "CONTOUR(1)"],
                     ["CONTOUR(2)", "CONTOUR(3)"]],
         "Pedal": [["PEDALFX_COM"], ["PEDALFX"]],
@@ -582,9 +590,9 @@ class PatchEditor:
                     badge="ACTIVE" if active else None)
 
     def _block_card(self, region, bname: str, **card_kw):
-        """One block's module card: `SW` becomes the Effects card, an
-        `FX(n)` block the live FX card, `COLOR` is skipped (it is rendered
-        inside the Effects card).
+        """One block's module card: an `FX(n)` block the live FX card, `OTHER`
+        the signal chain card, `AMP` the amp card; `SW` and `COLOR` have no card
+        (the chain diagram switches the effects and sets their colours).
 
         Args:
             region: the amp region of the selected patch.
@@ -594,17 +602,105 @@ class PatchEditor:
         Returns:
             The card control, or `None` for blocks without their own card.
         """
-        # COLOR is rendered inside the "Effects" card (one LED row per effect).
         if bname == "COLOR":
             return None
         if bname == "SW":
-            return self._effects_card(region)
+            return None                     # the chain diagram switches the effects
+        if bname == "OTHER":
+            return self._chain_card(region)
+        if bname == "AMP":
+            return self._amp_card(region)
         if re.fullmatch(r"FX\(\d\)", bname):
             return self._fx_card(region, bname)
         rows = model.row_for_block(region, bname, self.app.ps)
         return pv.block_card(model.block_title(bname), rows, self._set_param,
                              style=self._body_style(bname),
                              **{**self._variation_kw(bname), **card_kw})
+
+    # The settings that decide the chain: (block, label shown); the diagram follows them.
+    _CHAIN_SETTINGS = (("OTHER", "Chain"), ("PEDALFX_COM", "Pedal FX position"),
+                       ("EQ_EACH(1)", "EQ 1 position"), ("EQ_EACH(2)", "EQ 2 position"),
+                       ("SENDRETURN", "Send/Return position"))
+
+    def _chain_card(self, region) -> ft.Control:
+        """The signal chain: the chain preset and the positions of the Pedal FX, the EQs and
+        the Send/Return on one line, and below them the chain they give (see
+        :mod:`katatone.gui.chain`), redrawn when one of them changes."""
+        rows = []
+        for block, label in self._CHAIN_SETTINGS:
+            row = next(r for r in model.row_for_block(region, block, self.app.ps)
+                       if r.param.name.endswith(("_CHAIN", "_POSITION")))
+            rows.append(dataclasses.replace(row, label=label))
+        values = {r.block: int(r.value) for r in rows}
+        shown = ft.Container()
+
+        ps = self.app.ps
+        sw = {r.label: r for r in model.row_for_block(region, "SW", ps)}
+        color = {r.label: r for r in model.row_for_block(region, "COLOR", ps)}
+
+        def state(name: str):
+            """``(on, colour value)`` of an effect of the chain, None for the other elements."""
+            labels = chain.EFFECTS.get(name)
+            if labels is None:
+                return None
+            c = color.get(labels[1] or "DELAY")
+            return (bool(ps.get_param(region, "SW", sw[labels[0]].p_index)),
+                    None if c is None else int(ps.get_param(region, "COLOR", c.p_index)))
+
+        def draw() -> None:
+            """Show the chain the five settings give."""
+            order = chain.order(values["OTHER"], values["EQ_EACH(1)"], values["EQ_EACH(2)"],
+                                values["SENDRETURN"], values["PEDALFX_COM"])
+            shown.content = chain.diagram(order, state, click)
+
+        def click(name: str) -> None:
+            """A click on an effect: off -> green -> yellow -> red -> off."""
+            sw_label, color_label = chain.EFFECTS[name]
+            on, value = state(name)
+            new_on, new_color = chain.next_state(on, value, color_label is not None)
+            if color_label is not None and new_color != value:
+                self._set_color(color[color_label], new_color)
+                self.show_value("COLOR", color[color_label].p_index, new_color)
+            if new_on != on:
+                self._set_param(sw[sw_label], int(new_on))
+                self.show_value("SW", sw[sw_label].p_index, int(new_on))
+            draw()
+            try:
+                shown.update()
+            except RuntimeError:
+                pass                        # not on the page yet
+
+        def on_set(r: model.RowDesc, v: int) -> None:
+            """Selector callback: store the setting and redraw the diagram."""
+            self._set_param(r, v)
+            values[r.block] = int(v)
+            draw()
+            try:
+                shown.update()
+            except RuntimeError:
+                pass                        # not on the page yet
+
+        draw()
+        _, selectors, _ = pv.block_widgets(rows, on_set)
+        return pv.module_card("Signal chain", [pv.inline_row(selectors), shown],
+                              wide=True, led=False)
+
+    def _amp_card(self, region) -> ft.Control:
+        """The AMP card: the variation switches and the amp type on a line with the OTHER
+        block's cabinet resonance and master key, then the amp's knobs, then the noise
+        suppressor (NS) with its labels spelled out."""
+        ps = self.app.ps
+        other = [r for r in model.row_for_block(region, "OTHER", ps)
+                 if not r.param.name.endswith("_CHAIN")]
+        switches, selectors, knobs = pv.block_widgets(
+            model.row_for_block(region, "AMP", ps), self._set_param)
+        _, other_selectors, _ = pv.block_widgets(other, self._set_param)
+        body = [pv.inline_row([*switches, *selectors, *other_selectors]),
+                pv.wrap_row(knobs, spacing=6)]
+        ns = [dataclasses.replace(r, label=self._NS_LABELS.get(r.label, r.label))
+              for r in model.row_for_block(region, "NS", ps)]
+        body += pv.block_body(ns, self._set_param, "inline")
+        return pv.module_card(model.block_title("AMP"), body, wide=True)
 
     def _fx_card(self, region, bname: str) -> ft.Control:
         """MOD / FX slot: TYPE selector + only the selected effect's params
@@ -638,27 +734,6 @@ class PatchEditor:
         fill(int(type_row.value))
         return pv.module_card(model.block_title(bname), [lines], wide=True,
                               **self._variation_kw(bname))
-
-    def _effects_card(self, region) -> ft.Control:
-        """Effect on/off switches, each with its colour-variation LEDs."""
-        ps = self.app.ps
-        sw_rows = model.row_for_block(region, "SW", ps)
-        color_by_name = {r.label: r
-                         for r in model.row_for_block(region, "COLOR", ps)}
-        lines = []
-        for sw in sw_rows:
-            color_row = color_by_name.get(sw.label)
-            picker = (pv.color_picker(color_row, self._set_color,
-                                      disabled=not sw.value)
-                      if color_row is not None else None)
-            cb = pv.checkbox(sw, self._set_param, on_toggle=(
-                (lambda on, p=picker: p.set_disabled(not on)) if picker else None))
-            cb.width = 130
-            lines.append(ft.Row([cb, picker.root] if picker else [cb],
-                                spacing=10,
-                                vertical_alignment=ft.CrossAxisAlignment.CENTER))
-        return pv.module_card("Effects", [ft.Column(lines, spacing=2,
-                                                    tight=True)], wide=False)
 
     def _set_color(self, row: model.RowDesc, val: int) -> None:
         """Colour change selects another variation: re-light the cards.

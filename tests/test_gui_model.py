@@ -613,3 +613,160 @@ def test_the_two_parametric_eq_cards_are_half_width() -> None:
     cols = [c.col["lg"] for c in grid.controls]
     assert [cols[i] for i, n in enumerate(names) if n.startswith("EQ_PEQ")] == [6, 6]
     assert [cols[i] for i, n in enumerate(names) if n.startswith("EQ_GE10")] == [12, 12]
+
+
+def _amp_tab():
+    import types
+    from katatone.address.map import load_map
+    from katatone.gui import patch_editor as pe
+    from katatone.model.paramset import ParamSet
+    region = load_map()["PATCH(1)"]
+    ed = object.__new__(pe.PatchEditor)
+    ed.app = types.SimpleNamespace(ps=ParamSet(), region_for=lambda n: region, patch_number=0)
+    ed._active_colors = {}
+    ed._set_param = lambda *a: None
+    ed._widgets = {}
+    names = [b.name for b in region.blocks if model._tab_for(b.name) == "Amp"]
+    ed._tab_specs = [("Amp", names)]
+    ed._tab_view = types.SimpleNamespace(controls=[types.SimpleNamespace(content=None)])
+    ed._built = set()
+    ed._build_tab(0)
+    return ed, ed._tab_view.controls[0].content
+
+
+def test_the_amp_tab_has_the_chain_above_an_amp_card_holding_other_and_ns() -> None:
+    ed, content = _amp_tab()
+    rows = content.controls[0].controls                   # the card rows, top to bottom
+    first = [t for t in _titles(rows[0])]
+    second = [t for t in _titles(rows[1])][:1]
+    assert second == ["SIGNAL CHAIN"] and first[0] == "AMP"
+    texts = " ".join(t.upper() for t in first)
+    assert all(w in texts for w in ("CABINET RESONANCE", "MASTER KEY", "THRESHOLD", "RELEASE"))
+    all_titles = [_titles(r)[0] for r in rows]
+    assert all_titles.count("AMP") == 1 and "OTHER" not in all_titles and "NS" not in all_titles
+    assert all_titles[0] == "AMP" and "EFFECTS" not in all_titles       # the amp on top, no Effects card
+
+
+def test_the_chain_order_follows_the_preset_and_the_positions() -> None:
+    from katatone.gui import chain
+    default = chain.order(2, 0, 0, 0, 0)
+    assert default == ["Pedal FX", "Booster", "Mod", "FX", "EQ 1", "EQ 2", "AMP",
+                       "Foot Volume", "Send/Return", "Delay", "Delay 2", "Reverb"]
+    assert chain.order(0, 0, 1, 2, 1) == ["Booster", "EQ 1", "AMP", "EQ 2", "Pedal FX", "Send/Return",
+                                          "Mod", "FX", "Foot Volume", "Delay", "Delay 2", "Reverb"]
+    assert chain.order(8, 1, 1, 1, 0)[:5] == ["Pedal FX", "Mod", "FX", "Booster", "Delay"]
+    assert chain.order(8, 1, 1, 1, 0)[-2:] == ["Reverb", "Send/Return"]
+    for preset in range(9):                              # every preset plays each effect once
+        names = chain.order(preset, 0, 1, 0, 1)
+        assert sorted(names) == sorted(set(names)) and "AMP" in names and len(names) == 12
+
+
+def test_the_chain_diagram_shows_numbered_square_blocks_with_the_amp_highlighted() -> None:
+    from katatone.gui import chain, theme
+    ed, content = _amp_tab()
+    card = content.controls[0].controls[1]
+    titles = _titles(card)
+    assert titles.count("AMP") == 1 and titles.index("BOOSTER") < titles.index("AMP")
+    blocks = [c for c in _flatten(card) if getattr(c, "width", None) in (chain.BLOCK_SIZE[0], chain.AMP_SIZE[0])]
+    assert len(blocks) == 12 and sum(b.width == chain.AMP_SIZE[0] for b in blocks) == 1
+    amp = next(b for b in blocks if b.width == chain.AMP_SIZE[0])
+    assert amp.bgcolor == theme.ACCENT and amp.height == chain.AMP_SIZE[1]
+    assert all(b.bgcolor != theme.ACCENT and b.border_radius < 6 for b in blocks if b is not amp)
+
+
+def test_changing_a_chain_setting_redraws_the_diagram() -> None:
+    import types
+    import flet as ft
+    ed, content = _amp_tab()
+    card = content.controls[0].controls[1]
+    names = lambda: [t for t in _titles(card) if t.isupper() and t != "SIGNAL CHAIN"]   # noqa: E731
+    dropdowns = [c for c in _flatten(card) if type(c).__name__ == "Dropdown"]
+    assert len(dropdowns) == 5
+    before = names()
+    chain_dd = dropdowns[0]                                   # the chain preset: 1 in an empty patch
+    assert before.index("AMP") < before.index("MOD")          # chain 1: Booster, amp, Mod, ...
+    chain_dd.value = "4"
+    chain_dd.on_select(types.SimpleNamespace(control=chain_dd))
+    after = names()
+    assert after.index("BOOSTER") < after.index("MOD") < after.index("FX") < after.index("DELAY") < after.index("AMP")
+
+
+
+def test_the_amp_card_lines_and_the_noise_suppressor_names() -> None:
+    import flet as ft
+    ed, content = _amp_tab()
+    amp = content.controls[0].controls[0]
+    rows = [c for c in _flatten(amp) if isinstance(c, ft.Row)]
+    kinds = [[type(x).__name__ for x in r.controls] for r in rows]
+    # line 1: the two variation switches, then amp type, cabinet resonance and master key
+    assert ["Container", "Container", "Column", "Column", "Column"] in kinds
+    assert ["Knob"] * 7 in kinds                              # line 2: the amp's knobs alone
+    shown = _titles(amp)
+    switches = [c.label for c in _flatten(amp) if type(c).__name__ == "Checkbox"]
+    assert "NOISE SUPPRESSOR" in switches                     # the NS enable switch
+    assert "NS THRESHOLD" in shown and "NS RELEASE" in shown
+    assert not any(t.startswith("Chain ") for t in _titles(content.controls[0].controls[1]))
+
+
+def test_a_click_goes_off_green_yellow_red_off() -> None:
+    from katatone.gui import chain
+    state = (False, 1)                                      # off, red kept from before
+    seen = []
+    for _ in range(5):
+        state = chain.next_state(*state)
+        seen.append(state)
+    assert seen == [(True, 0), (True, 2), (True, 1), (False, 1), (True, 0)]      # green, yellow, red
+    assert chain.next_state(True, 0, has_color=False) == (False, 0)       # no colour: on and off
+    assert chain.next_state(False, None, has_color=False) == (True, None)
+
+
+def test_clicking_an_effect_in_the_diagram_switches_it_and_cycles_its_colour() -> None:
+    import types
+    from katatone.gui import chain, theme
+    ed, content = _amp_tab()
+    ps, region = ed.app.ps, ed.app.region_for(0)
+    ed._set_param = lambda row, v: ps.set_param(region, row.block, row.p_index, v)
+    ed.tabs = types.SimpleNamespace(selected_index=0)
+    card = content.controls[0].controls[1]
+
+    def block(name):
+        return next(c for c in _flatten(card) if getattr(c, "on_click", None) and name in _titles(c))
+
+    def now(label_index):
+        return ps.get_param(region, "SW", label_index), ps.get_param(region, "COLOR", label_index)
+
+    assert now(0)[0] == 0 and block("BOOSTER").opacity < 1            # booster starts off, dimmed
+    seen = []
+    for _ in range(4):
+        block("BOOSTER").on_click(None)
+        seen.append(now(0))
+    assert seen == [(1, 0), (1, 2), (1, 1), (0, 1)]                    # green, yellow, red, off
+    block("BOOSTER").on_click(None)
+    assert block("BOOSTER").border.top.color == "#40c057" and block("BOOSTER").opacity == 1
+    block("DELAY 2").on_click(None)
+    assert ps.get_param(region, "SW", 4) == 1                          # Delay 2: on / off only
+    assert not [c for c in _flatten(card) if "AMP" in _titles(c) and getattr(c, "on_click", None)]
+
+
+def test_each_chain_dropdown_moves_only_its_own_element() -> None:
+    import types
+    from katatone.gui import chain
+    ed, content = _amp_tab()
+    card = content.controls[0].controls[1]
+    dds = {n: d for n, d in zip(("chain", "pedal", "eq1", "eq2", "sr"),
+                                [c for c in _flatten(card) if type(c).__name__ == "Dropdown"])}
+    names = lambda: [t for t in _titles(card) if t in {n.upper() for n in chain.order(0, 0, 0, 0, 0)}]   # noqa: E731
+
+    def pick(key, value):
+        dds[key].value = value
+        dds[key].on_select(types.SimpleNamespace(control=dds[key]))
+
+    assert names() == [n.upper() for n in chain.order(0, 0, 0, 0, 0)]
+    pick("pedal", "POST AMP")
+    assert names() == [n.upper() for n in chain.order(0, 0, 0, 0, 1)]
+    assert [d.value for d in dds.values()] == ["1", "POST AMP", "AMP IN", "AMP IN", "POST FV"]   # EQ 1 untouched
+    pick("eq1", "AMP OUT")
+    assert names() == [n.upper() for n in chain.order(0, 1, 0, 0, 1)]
+    pick("eq2", "AMP OUT")
+    pick("sr", "POST REV")
+    assert names() == [n.upper() for n in chain.order(0, 1, 1, 1, 1)]
