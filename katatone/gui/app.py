@@ -37,7 +37,7 @@ from .history import EditHistory
 from .model import display_label
 from .headless import HeadlessPage
 from .knob import Knob
-from . import (library_pane, login, metronome_pane, midi_pane, patch_editor, setlist_pane,
+from . import (library_pane, login, metronome_pane, midi_pane, patch_editor, pedal, setlist_pane,
                statusbar, system_pane)
 
 TAB_PATCH = "PATCH"
@@ -1038,17 +1038,49 @@ class App:
         self.set_busy(True, f"Writing {self.slot_name(n)}…")
         self.busy_writing = True
         try:
+            moved = self._take_pedal_values(n, ps)
             self._store(n, ps, self.patch_name() or None)
             if self.patch_name():
                 self.slot_cache[n] = ps.copy()
             self.dirty = False
             self._synced()
-            self.set_status(f"Wrote {self.slot_name(n)}: {self.patch_name()!r}")
+            self.set_status(f"Wrote {self.slot_name(n)}: {self.patch_name()!r}"
+                            + (f" (with {moved} value{'s' if moved != 1 else ''} the pedal moved)"
+                               if moved else ""))
         except Exception as e:                       # noqa: BLE001
             self.set_status(f"Write failed: {e}")
         finally:
             self.busy_writing = False
             self.refresh()
+
+    def _take_pedal_values(self, n: int, ps: ParamSet) -> int:
+        """Before a write: put into ``ps`` the live value of each parameter a pedal drives.
+
+        The amp moves such a parameter with the pedal, so the patch it plays can differ from the
+        one in the editor.  Only when the editor shows the sound the amp plays (live edit is on),
+        and a parameter that cannot be read is left as it is.
+
+        Args:
+            n: the amp slot index being written (0-based).
+            ps: the patch about to be written; changed in place.
+        Returns:
+            How many parameters took a different value.
+        """
+        if not (self.live_ready and self.connected and self.amp_patch == n):
+            return 0
+        from ..amp.write import read_param
+        region = self.region_for(n)
+        moved = 0
+        for block, index in pedal.targets(ps, region):
+            try:
+                value = read_param(self.transport, block, index)
+            except Exception as e:                   # noqa: BLE001
+                log.warning("could not read %s[%d] for the pedal: %s", block, index, e)
+                continue
+            if value != ps.get_param(region, block, index):
+                ps.set_param(region, block, index, value)
+                moved += 1
+        return moved
 
     def _store(self, n: int, ps: ParamSet, name: str | None) -> None:
         """Store a patch in slot ``n``.
