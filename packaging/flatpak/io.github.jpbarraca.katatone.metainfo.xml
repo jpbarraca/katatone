@@ -21,6 +21,14 @@
     <category>Music</category>
   </categories>
   <releases>
+    <release version="0.5.2" date="2026-11-08">
+      <description>
+        <p>Fix: the settings of the phaser, flanger, tremolo, vibrato and the other effects stored late in the patch (most of the MOD and FX list) were shown as 0 when a patch was read. Writing a patch that uses them to the amp stored them wrongly; both are fixed.</p>
+        <p>Writing a patch stores the live value of the parameter an expression pedal drives, so what is saved is what you hear.</p>
+        <p>Analyzer: play the reference (the chosen part) to a sound card with Play/Pause and a time slider, with the display following it. The controls are grouped and compact, and the display options are push buttons.</p>
+        <p>Every remaining checkbox is a push button that stays pressed. The noise suppressor sits on the amp's knob line. A delay card is lit only when its effect is switched on.</p>
+      </description>
+    </release>
     <release version="0.5.1" date="2026-11-08">
       <description>
         <p>New METRONOME tab: a click track with tap tempo, beats per bar and subdivisions, played to a sound card, and controllable from a MIDI footswitch.</p>
