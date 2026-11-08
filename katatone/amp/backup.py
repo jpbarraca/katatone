@@ -6,7 +6,7 @@ The file is JSON.  Each patch and the system settings use the liveset file's
 into a ``.tsl`` by hand::
 
     {"format": "katatone-backup", "formatRev": 1, "device": "KATANA Gen3",
-     "created": "...", "katatone": "0.5.0",
+     "created": "...", "katatone": "0.5.1",
      "patches": [ {"PATCH%COM": ["4B", ...], ...}, ... ten of them ],
      "system": {"SYSTEM%...": [...], ...}}
 """

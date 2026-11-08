@@ -11,7 +11,7 @@ You need Flatpak and the GNOME 50 runtime (Flatpak fetches it when it is missing
 
 ```bash
 flatpak install --user flathub org.gnome.Platform//50
-flatpak install --user katatone-0.5.0-x86_64.flatpak     # the file from the release page
+flatpak install --user katatone-0.5.1-x86_64.flatpak     # the file from the release page
 flatpak run io.github.jpbarraca.katatone
 ```
 
@@ -71,7 +71,7 @@ flatpak-builder --user --install --force-clean --disable-rofiles-fuse \
 adding `--repo=/tmp/katatone-repo` and then
 
 ```bash
-flatpak build-bundle /tmp/katatone-repo katatone-0.5.0-x86_64.flatpak io.github.jpbarraca.katatone master
+flatpak build-bundle /tmp/katatone-repo katatone-0.5.1-x86_64.flatpak io.github.jpbarraca.katatone master
 ```
 
 makes the file.  A release does not need any of this: pushing a version tag builds and

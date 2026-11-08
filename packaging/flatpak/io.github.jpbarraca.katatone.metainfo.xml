@@ -21,6 +21,15 @@
     <category>Music</category>
   </categories>
   <releases>
+    <release version="0.5.1" date="2026-11-08">
+      <description>
+        <p>New METRONOME tab: a click track with tap tempo, beats per bar and subdivisions, played to a sound card, and controllable from a MIDI footswitch.</p>
+        <p>The Amp tab shows the signal chain: pick the chain and the positions of the Pedal FX, the EQs and the Send/Return, see the order, and click an effect to switch it off or cycle its colour. The AMP card now holds the cabinet resonance, master key and noise suppressor.</p>
+        <p>The Assign tab has a sub-tab for each effect, and the Delay, EQ and effect cards are laid out more compactly.</p>
+        <p>Knobs can be selected and stepped with the arrow keys (1 and 10), and their value typed by clicking the number. The pitch shifter shows its direct mix first. The two preview mute buttons are one toggle.</p>
+        <p>Slot names are read from the amp when it connects, and switching to a slot read before is instant. Saving to the library asks before overwriting a patch. The SYSTEM tab no longer fails when opened right after connecting.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-10-26">
       <description>
         <p>Undo and redo in the patch editor, and backup and restore of the whole amp.</p>
