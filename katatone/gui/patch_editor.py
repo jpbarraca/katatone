@@ -550,10 +550,10 @@ class PatchEditor:
         "Contour": [["CONTOUR_COM", "CONTOUR(1)"],
                     ["CONTOUR(2)", "CONTOUR(3)"]],
         "Pedal": [["PEDALFX_COM"], ["PEDALFX"]],
-        # DELAY(1..3) / (4..6) are Delay 1 / Delay 2 in green, red, yellow:
-        # one colour per line, the two delays side by side.
-        "Delay": [["DELAY(1)", "DELAY(4)"], ["DELAY(2)", "DELAY(5)"],
-                  ["DELAY(3)", "DELAY(6)"]],
+        # DELAY(1..3) / (4..6) are Delay 1 / Delay 2 in green, red, yellow: one colour per
+        # line, in the order green, yellow, red, the two delays side by side.
+        "Delay": [["DELAY(1)", "DELAY(4)"], ["DELAY(3)", "DELAY(6)"],
+                  ["DELAY(2)", "DELAY(5)"]],
     }
 
     @staticmethod

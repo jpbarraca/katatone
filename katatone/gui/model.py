@@ -364,6 +364,40 @@ def _tab_for(name: str) -> str:
     return "Other"
 
 
+#: The order the colour variations are shown in: green, yellow, red (the amp numbers them
+#: green, red, yellow).
+VARIATION_ORDER = (0, 2, 1)
+
+
+def in_colour_order(block_names: list[str]) -> list[str]:
+    """The blocks, with the three variations of each effect slot in the order green, yellow, red.
+
+    Args:
+        block_names: block names, the variations of a slot next to each other.
+    Returns:
+        The same names; only the variations of a slot change places among themselves.
+    """
+    out: list[str] = []
+    run: list[str] = []
+
+    def flush() -> None:
+        out.extend(sorted(run, key=lambda n: VARIATION_ORDER.index(block_variation(n)[1])))
+        run.clear()
+
+    for name in block_names:
+        v = block_variation(name)
+        if v is not None and run and block_variation(run[0])[0] == v[0]:
+            run.append(name)
+            continue
+        flush()
+        if v is None:
+            out.append(name)
+        else:
+            run.append(name)
+    flush()
+    return out
+
+
 def group_blocks(block_names: list[str]) -> list[tuple[str, list[str]]]:
     """Group block names into logical editor tabs (order-preserving).
 
@@ -377,7 +411,7 @@ def group_blocks(block_names: list[str]) -> list[tuple[str, list[str]]]:
     buckets: dict[str, list[str]] = {g: [] for g in _TAB_ORDER}
     for name in block_names:
         buckets[_tab_for(name)].append(name)
-    return [(g, buckets[g]) for g in _TAB_ORDER if buckets[g]]
+    return [(g, in_colour_order(buckets[g])) for g in _TAB_ORDER if buckets[g]]
 
 
 

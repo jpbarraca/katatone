@@ -791,3 +791,24 @@ def test_a_delay_card_is_active_only_when_its_effect_is_switched_on_in_its_colou
     assert ed._variation_kw("DELAY(4)")["badge"] == "ACTIVE" and ed._variation_kw("DELAY(4)")["led"]
     ps.set_param(region, "SW", 3, 0)                          # Delay 1 off
     assert ed._variation_kw("DELAY(1)")["badge"] is None
+
+
+def test_the_variations_of_every_effect_are_shown_green_yellow_red() -> None:
+    from katatone.address.map import load_map
+    region = load_map()["PATCH(1)"]
+    names = [b.name for b in region.blocks if b.name != "COM" and not b.name.startswith("FX_DETAIL")]
+    groups = dict(group_blocks(names))                 # what the editor's tabs are made of
+    colour = lambda names: [model.block_variation(n)[1] for n in names]       # noqa: E731
+    assert groups["Booster"] == ["BOOSTER(1)", "BOOSTER(3)", "BOOSTER(2)"]
+    assert groups["MOD"] == ["FX(1)", "FX(3)", "FX(2)"] and groups["FX"] == ["FX(4)", "FX(6)", "FX(5)"]
+    assert groups["Reverb"] == ["REVERB(1)", "REVERB(3)", "REVERB(2)"]
+    assert groups["Delay"] == ["DELAY(1)", "DELAY(3)", "DELAY(2)", "DELAY(4)", "DELAY(6)", "DELAY(5)"]
+    assert colour(groups["Delay"]) == [0, 2, 1, 0, 2, 1]                      # green, yellow, red
+    assert groups["Amp"] == ["OTHER", "COLOR", "AMP", "SW", "NS", "SENDRETURN"]   # other tabs keep their order
+    assert model.in_colour_order(["EQ_EACH(1)", "EQ_EACH(2)"]) == ["EQ_EACH(1)", "EQ_EACH(2)"]
+
+
+def test_the_delay_tab_lines_run_green_yellow_red() -> None:
+    from katatone.gui import patch_editor as pe
+    rows = pe.PatchEditor._TAB_LAYOUTS["Delay"]
+    assert [model.block_variation(first)[1] for first, _ in rows] == [0, 2, 1]
