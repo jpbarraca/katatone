@@ -21,6 +21,14 @@
     <category>Music</category>
   </categories>
   <releases>
+    <release version="0.6.0" date="2026-11-15">
+      <description>
+        <p>New TONE AI tab: type a song, and optionally your guitar, and an AI suggests the amp's settings (amp, booster, mod, FX, delay, reverb, EQ and noise suppressor) and the pickup to use. Ask an OpenAI-style server, or Claude through the Agent Client Protocol (the tab can install the agent and sign in for you). Take the whole suggestion or only the settings you like, section by section or one by one, with Apply (one undo step) or Save to library.</p>
+        <p>Patches have notes: a Notes tab at the end of the patch, notes edited in the library and kept in the liveset, and the text of a suggestion can be added to them without applying any setting.</p>
+        <p>Save to library asks plainly for an existing liveset or a new one, and a new name that is taken is refused instead of becoming "Name 2".</p>
+        <p>The Flatpak includes Node.js, which the Claude agent needs.</p>
+      </description>
+    </release>
     <release version="0.5.2" date="2026-11-08">
       <description>
         <p>Fix: the settings of the phaser, flanger, tremolo, vibrato and the other effects stored late in the patch (most of the MOD and FX list) were shown as 0 when a patch was read. Writing a patch that uses them to the amp stored them wrongly; both are fixed.</p>
