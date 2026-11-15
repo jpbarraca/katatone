@@ -16,13 +16,6 @@ def chat(settings: Settings, system: str, user: str) -> str:
     return client.chat(settings, system, user)
 
 
-def describe(settings: Settings) -> str:
-    """Where questions go, for the user ("https://api.openai.com/v1")."""
-    if settings.provider == "acp":
-        return f"{settings.acp_command} (ACP)"
-    return settings.base_url
-
-
 def model_label(settings: Settings) -> str:
     """The model asked, for the status line."""
     if settings.provider == "acp":

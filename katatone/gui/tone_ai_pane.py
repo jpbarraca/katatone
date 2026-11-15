@@ -14,6 +14,7 @@ import flet as ft
 from ..ai import backend, client, parse, prompt, setup, store
 from ..ai.proposal import Proposal, Row, Section
 from ..amp import slots
+from ..model.paramset import ParamSet
 from . import params_view as pv, theme
 
 if TYPE_CHECKING:
@@ -28,12 +29,6 @@ def build(app: App) -> ft.Control:
     """Instantiate the pane, keep it on ``app.tone_ai`` and return its root control."""
     app.tone_ai = _ToneAiPane(app)
     return app.tone_ai.root
-
-
-def refresh(app: App) -> None:
-    """Refresh the pane (the amp model shown) if the app already has one."""
-    if hasattr(app, "tone_ai"):
-        app.tone_ai.refresh()
 
 
 def _safe_update(ctrl) -> None:
@@ -167,32 +162,27 @@ class _ToneAiPane:
         self.query = ft.TextField(
             label="Song", hint_text="a title, or title and artist: Sultans of Swing, Dire Straits",
             expand=True, on_submit=lambda e: self.ask(), **pv.FIELD_STYLE)
+        self.guitar = ft.TextField(
+            label="Guitar", hint_text="optional: Fender Stratocaster, single coils",
+            value=self.settings.guitar, width=300, on_submit=lambda e: self.ask(), **pv.FIELD_STYLE)
         self.ask_button = pv.button("Ask", ft.Icons.AUTO_AWESOME, lambda e: self.ask(), primary=True)
-        self.amp_text = ft.Text("", size=12, color=theme.MUTED)
         self.status = ft.Text("", size=13, color=theme.MUTED)
         self.spinner = ft.ProgressRing(width=16, height=16, stroke_width=2, visible=False,
                                        color=theme.ACCENT)
         self.result = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
-        search = ft.Row([self.query, self.ask_button,
+        search = ft.Row([self.query, self.guitar, self.ask_button,
                          ft.IconButton(ft.Icons.SETTINGS, tooltip="Tone AI settings",
                                        icon_color=theme.MUTED, on_click=lambda e: self.open_settings())],
                         spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         self.root = ft.Column([
             ft.Container(search,            # room for the floating field label
                          padding=ft.Padding(left=0, right=0, top=8, bottom=0)),
-            ft.Row([self.spinner, self.status, ft.Container(expand=True), self.amp_text],
+            ft.Row([self.spinner, self.status],
                    spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             self.result,
         ], spacing=10, expand=True)
-        self.refresh()
 
     # ------------------------------------------------------------------ state
-
-    def refresh(self) -> None:
-        """Show the connected amp model and the server the question goes to."""
-        self.amp_text.value = (f"Sends the song and “{slots.model_name(self.app.model)}” to "
-                               f"{backend.describe(self.settings)}")
-        _safe_update(self.amp_text)
 
     def _say(self, text: str, error: bool = False) -> None:
         self.status.value = text
@@ -211,21 +201,39 @@ class _ToneAiPane:
         if not self.settings.ready:
             self._say("Set the server's API key first (or use Claude through ACP).", error=True)
             return self.open_settings()
+        guitar = (self.guitar.value or "").strip()
+        self._remember(guitar)
+        # Every question stands alone: the last suggestion is not the answer to this one, and
+        # must not stay on screen (or be applied) as if it were.
+        self.proposal, self._raw, self._ps = None, "", None
+        self.result.controls = []
         self._gen += 1
         self._asking = True
         self.ask_button.disabled = True
         self.spinner.visible = True
-        self._say(f"Asking {backend.model_label(self.settings)} about “{song}”…")
+        self._say(f"Asking {backend.model_label(self.settings)} about “{song}”"
+                  + (f" on {guitar}" if guitar else "") + "…")
         _safe_update(self.root)
         self.app.page.run_thread(self._work, self._gen, song, slots.model_name(self.app.model),
-                                 self.settings)
+                                 self.settings, guitar)
 
-    def _work(self, gen: int, song: str, amp: str, settings: store.Settings) -> None:
+    def _remember(self, guitar: str) -> None:
+        """Keep the guitar for the next time (it is rarely another one)."""
+        if guitar == self.settings.guitar:
+            return
+        self.settings.guitar = guitar
+        try:
+            store.save(self.settings)
+        except OSError:
+            pass                            # read-only data directory: it is asked for again
+
+    def _work(self, gen: int, song: str, amp: str, settings: store.Settings,
+              guitar: str = "") -> None:
         """Ask, parse and show the answer (a worker thread)."""
         proposal, raw, ps, error = None, "", None, ""
         try:
             for attempt in range(RETRIES + 1):
-                raw = backend.chat(settings, prompt.system_prompt(), prompt.user_prompt(song, amp))
+                raw = backend.chat(settings, prompt.system_prompt(), prompt.user_prompt(song, amp, guitar))
                 try:
                     with self.app.state_lock:
                         ps = self.app.ps
@@ -250,6 +258,7 @@ class _ToneAiPane:
             self._say(error, error=True)
         else:
             self.proposal, self._raw, self._ps = proposal, raw, ps
+            self._sync_notes(proposal, reset=True)
             self._say("")
         self._render()
 
@@ -263,13 +272,42 @@ class _ToneAiPane:
         if self.app.ps is not self._ps:
             self._reparse("The patch in the editor changed: look at the suggestion again.")
             return
-        changes = p.changes()
-        if not changes:
+        self._sync_notes(p)
+        changes, notes = p.changes(), p.notes_text() if p.notes_pending else ""
+        if not changes and not notes:
             return self._say("Nothing is taken.")
-        self.app.apply_group(changes, "the suggested tone",
-                             f"Applied {len(changes)} setting{'s' * (len(changes) != 1)} "
-                             f"of {p.song or 'the suggestion'}. Ctrl+Z undoes them.")
+        song = p.song or "the suggestion"
+        n = f"{len(changes)} setting{'s' * (len(changes) != 1)}"
+        if not changes:
+            note = f"Added the suggestion for {song} to the notes (NOTES tab)."
+        elif notes:
+            note = (f"Applied {n} of {song}, and its text added to the notes (NOTES tab). "
+                    "Ctrl+Z undoes the settings.")
+        else:
+            note = f"Applied {n} of {song}. Ctrl+Z undoes them."
+        self.app.apply_group(changes, "the suggested tone", note, notes=notes)
         self._reparse()
+
+    def save_to_library(self) -> None:
+        """Save the patch in the editor with the taken settings, named after the song, into a
+        liveset of the library.  The editor's patch and the amp are not changed."""
+        p = self.proposal
+        if p is None:
+            return
+        if self.app.ps is not self._ps:
+            self._reparse("The patch in the editor changed: look at the suggestion again.")
+            return
+        with self.app.state_lock:
+            copy = ParamSet()
+            copy.data = dict(self.app.ps.data)
+            region = self.app.region_for(self.app.patch_number)
+            for block, p_index, value in p.changes():
+                copy.set_param(region, block, p_index, value)
+        copy.set_block("PATCH%COM", ParamSet.encode_patch_name(p.patch_name()))
+        self._sync_notes(p)
+        # The copy keeps the editor's own notes, and has the suggestion's text below them when taken.
+        notes = self.app.merged_notes(p.notes_text()) if p.notes_pending else None
+        self.app.editor._save_to_library(copy, notes=notes)
 
     def _reparse(self, say: str = "") -> None:
         """Read the reply again against the patch as it is now."""
@@ -277,6 +315,7 @@ class _ToneAiPane:
             with self.app.state_lock:
                 self._ps = self.app.ps
                 self.proposal = parse.parse(self._raw, self._ps)
+            self._sync_notes(self.proposal, reset=True)
         except parse.ReplyError as e:
             self.proposal = None
             say = str(e)
@@ -286,9 +325,18 @@ class _ToneAiPane:
 
     # ------------------------------------------------------------ the result
 
+    def _sync_notes(self, p: Proposal, reset: bool = False) -> None:
+        """Note whether the suggestion's text is already in the editor's notes (then there is
+        nothing to add); ``reset`` also sets the box: ticked unless it is."""
+        p.notes_present = p.notes_text().strip() in self.app.notes
+        if reset:
+            p.take_notes = not p.notes_present
+
     def _render(self) -> None:
         """Rebuild the result area from the proposal."""
         p = self.proposal
+        if p:
+            self._sync_notes(p)
         self.result.controls = self._cards(p) if p else []
         _safe_update(self.root)
 
@@ -327,24 +375,38 @@ class _ToneAiPane:
         if not sure:
             lines.append(self._note("The model is not sure this is the song you meant: "
                                     "check the title and artist above."))
-        for label, text in (("Original rig", p.rig), ("Approach", p.reasoning), ("Notes", p.notes)):
+        for label, text in (("Original rig", p.rig), ("Approach", p.reasoning),
+                             ("Pickup", p.pickup), ("Notes", p.notes)):
             if text:
                 lines.append(ft.Text(spans=[ft.TextSpan(f"{label}: ", ft.TextStyle(
                     color=theme.LABEL, weight=ft.FontWeight.W_600)), ft.TextSpan(text)],
                     size=13, selectable=True))
+        def toggle(e) -> None:
+            p.take_notes = bool(e.control.value)
+            self._render()
+
+        lines.append(ft.Checkbox(
+            label=("Already in the patch's notes" if p.notes_present
+                   else "Add this text to the patch's notes (NOTES tab)"),
+            value=p.notes_pending, disabled=p.notes_present, on_change=toggle,
+            active_color=theme.ACCENT))
         return pv.module_card("Suggestion", lines, led=sure)
 
     def _actions(self, p: Proposal) -> ft.Control:
-        n = p.count
-        apply = pv.button(f"Apply {n} selected" if n else "Nothing selected",
-                          ft.Icons.CHECK, lambda e: self.apply(), primary=True)
-        apply.disabled = n == 0
+        n, notes = p.count, p.notes_pending
+        label = (f"Apply {n} selected" + (" + notes" if notes else "") if n
+                 else "Add to notes" if notes else "Nothing selected")
+        apply = pv.button(label, ft.Icons.CHECK, lambda e: self.apply(), primary=True)
+        apply.disabled = not (n or notes)
         return ft.Row([
             apply,
+            pv.button("Save to library", ft.Icons.LIBRARY_ADD, lambda e: self.save_to_library()),
             pv.button("Select all", ft.Icons.DONE_ALL, lambda e: self._select(True)),
             pv.button("Select none", ft.Icons.REMOVE_DONE, lambda e: self._select(False)),
-            ft.Text("Applies to the patch in the editor; Ctrl+Z takes it back.", size=12,
-                    color=theme.MUTED)],
+            ft.Text("Apply changes the patch in the editor (Ctrl+Z takes the settings back); "
+                    "Save to library keeps a copy with the taken settings and leaves the "
+                    "editor alone.  Both add the suggestion's text to the patch's notes when "
+                    "it is ticked.", size=12, color=theme.MUTED)],
             spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     def _select(self, on: bool) -> None:
@@ -446,14 +508,13 @@ class _ToneAiPane:
                 base_url=text("url") or store.DEFAULT_URL, model=text("model") or store.DEFAULT_MODEL,
                 api_key=text("key") or s.api_key, provider=provider.value or "openai",
                 acp_command=s.acp_command if web else text("acp_command") or store.DEFAULT_ACP_COMMAND,
-                acp_model=text("acp_model"))
+                acp_model=text("acp_model"), guitar=(self.guitar.value or "").strip())
             try:
                 store.save(new)
             except OSError as err:
                 return self._say(f"Cannot save the settings: {err}", error=True)
             self.settings = new
             close()
-            self.refresh()
             self._say("Settings saved.")
 
         def close(e=None) -> None:

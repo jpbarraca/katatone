@@ -152,3 +152,10 @@ def test_loose_keys_of_an_effect_are_taken_as_settings(ps) -> None:
 def test_section_with_only_unusable_keys_counts_as_missing(ps) -> None:
     p = parse.parse({"amp": {"gain": 5}, "reverb": {"type": "Cathedral"}}, ps)
     assert "Reverb · GREEN" in p.missing and len(p.sections) == 1
+
+
+def test_the_pickup_advice_is_read(ps) -> None:
+    p = parse.parse({"pickup": "bridge humbucker, tone at 7", "amp": {"gain": 10}}, ps)
+    assert p.pickup == "bridge humbucker, tone at 7"
+    assert parse.parse({"amp": {"gain": 10}}, ps).pickup == ""          # optional
+    assert parse.parse({"pickup": None, "amp": {"gain": 10}}, ps).pickup == ""

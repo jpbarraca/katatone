@@ -11,7 +11,8 @@ import sys
 import time
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "ok"
-seen: dict = {"cwd_exists": None, "model_set": None, "system": None, "prompt": None, "meta": None}
+prompts = 0
+seen: dict = {"cwd": None, "prompt_count": 0, "session_id": None, "env": None, "cwd_exists": None, "model_set": None, "system": None, "prompt": None, "meta": None}
 MODELS = [{"value": "default", "name": "Default"}, {"value": "sonnet", "name": "Sonnet 5.5"},
           {"value": "opus", "name": "Opus 5.5"}]
 
@@ -57,6 +58,8 @@ while True:
         if mode == "authfail":
             send({"id": mid, "error": {"code": -32000, "message": "Authentication required"}})
             continue
+        seen["cwd"] = p["cwd"]
+        seen["env"] = os.environ.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY")
         seen["cwd_exists"] = os.path.isdir(p["cwd"]) and os.listdir(p["cwd"]) == []
         seen["meta"] = p.get("_meta")
         sp = p.get("systemPrompt")
@@ -73,6 +76,8 @@ while True:
         seen["model_set"] = [p["configId"], p["value"]]
         send({"id": mid, "result": {"configOptions": []}})
     elif method == "session/prompt":
+        prompts += 1
+        seen["prompt_count"] = prompts
         seen["prompt"] = p["prompt"][0]["text"]
         if mode == "hang":
             time.sleep(60)

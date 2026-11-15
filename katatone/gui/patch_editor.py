@@ -18,7 +18,7 @@ import flet as ft
 
 from ..amp import slots
 from ..liveset.tsl import LivesetFull, Tsl
-from ..library.store import LibraryFull
+from ..library.store import LibraryFull, clean_name
 from ..model.paramset import ParamSet
 from . import model, params_view as pv, theme
 from . import chain
@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 _TAB_HEIGHT = 40
 _DIVIDER_HEIGHT = 1
 _CONTENT_TOP = 12
+#: The last tab of the patch: its notes (not blocks of the amp).
+NOTES_TAB = "Notes"
 _ALIGN_NUDGE = 8      # measured by eye: Flutter adds a little around the tab row
 _ASSIGN_CHIP_HEIGHT = 30
 _AMP_NS_GAP = 16        # between the amp's knobs and the noise suppressor's
@@ -126,37 +128,75 @@ class PatchEditor:
             width=250, padding=ft.Padding(left=0, right=0, top=_CARDS_TOP,
                                           bottom=0))
 
-    def _save_to_library(self) -> None:
-        """Ask which liveset to save the editor's patch into (an existing one
-        or a new one) and append it there; the amp is not touched."""
+    def _save_to_library(self, ps: ParamSet | None = None, notes: str | None = None) -> None:
+        """Ask which liveset to save a patch into (an existing one or a new one)
+        and append it there; the amp is not touched.
+
+        Args:
+            ps: the patch to save (the editor's own when not given).
+            notes: its notes, kept as the patch's memo (the editor's own when not given).  A
+                patch that is overwritten keeps its old notes when there are none to give.
+        """
         ft.context.disable_auto_update()
         Knob.deselect()                     # the dialog has text fields: the arrows are theirs
         app = self.app
+        patch = app.ps if ps is None else ps
+        notes = (getattr(app, "notes", "") if notes is None else notes).strip()
+        patch_name = (app.patch_name if ps is None
+                      else lambda: ParamSet.patch_name(patch.block("PATCH%COM")))
         names = [e.name for e in app.lib.list()]
         chosen = getattr(getattr(app, "library", None), "selected", None)
+        field_style = {k: v for k, v in pv.FIELD_STYLE.items() if k != "text_size"}
         target = ft.Dropdown(
-            label="Liveset", width=300, text_size=13,
+            label="Liveset", width=300, text_size=13, data="liveset",
             options=[pv._option(n) for n in names],
-            value=chosen if chosen in names else (names[0] if names else None),
-            disabled=not names, **{k: v for k, v in pv.FIELD_STYLE.items()
-                                   if k != "text_size"})
-        new = ft.TextField(label="Or a new liveset", hint_text="My liveset",
-                           max_length=64, **pv.FIELD_STYLE)
+            value=chosen if chosen in names else (names[0] if names else None), **field_style)
+        new = ft.TextField(label="Name of the new liveset", hint_text="My liveset", width=300,
+                           max_length=64, data="name", **pv.FIELD_STYLE)
+        mode = ft.RadioGroup(
+            data="mode", value="existing" if names else "new",
+            content=ft.Column([
+                ft.Radio(value="existing", label="Add to an existing liveset", disabled=not names,
+                         active_color=theme.ACCENT),
+                target,
+                ft.Radio(value="new", label="Create a new liveset", active_color=theme.ACCENT),
+                new], spacing=8, tight=True))
+
+        def push(*ctrls) -> None:
+            for ctrl in ctrls:
+                try:
+                    ctrl.update()
+                except RuntimeError:
+                    pass                    # not on a page yet
+
+        def choose(way: str) -> None:
+            """Touching a field chooses its way (add to a liveset, or create one)."""
+            if mode.value != way:
+                mode.value = way
+                new.error, target.error_text = None, None
+                push(mode, new, target)
+
+        target.disabled = not names
+        target.on_select = lambda e: choose("existing")
+        new.on_focus = lambda e: choose("new")
+        new.on_change = lambda e: choose("new")
 
         def store(tsl, index=None) -> None:
             """Append the patch to ``tsl``, or overwrite patch ``index``."""
             try:
                 if index is None:
-                    tsl.add(Tsl.encode(app.ps))
+                    tsl.add(Tsl.encode(patch), memo=notes)
                 else:
-                    tsl.replace(index, Tsl.encode(app.ps))
+                    tsl.replace(index, Tsl.encode(patch))
+                    if notes:
+                        tsl.set_note(index, notes)
                 app.lib.save(tsl)
             except (LivesetFull, LibraryFull, OSError, ValueError) as err:
                 app.set_status(f"Save to library failed: {err}")
                 return
             if hasattr(app, "library"):
                 app.library.selected = tsl.name
-            app.set_status(f"Saved {app.patch_name() or 'patch'!r} to "
+            app.set_status(f"Saved {patch_name() or 'patch'!r} to "
                            f"liveset {tsl.name!r}.")
             app.library_refresh()
 
@@ -176,20 +216,29 @@ class PatchEditor:
                          pv.button("Overwrite", ft.Icons.CHECK, yes, primary=True)]))
 
         def ok(e=None) -> None:
-            """Close the dialog and save the patch to the chosen liveset,
-            after confirmation if that liveset has a patch of that name."""
-            app.page.pop_dialog()
+            """Save the patch to the chosen liveset (or a new one), after confirmation if that
+            liveset has a patch of that name.  The dialog stays open when a choice is missing."""
+            creating = mode.value == "new"
             new_name = (new.value or "").strip()
-            if not new_name and not target.value:
-                app.set_status("Choose a liveset or enter a new name.")
+            problem = None
+            if creating and not new_name:
+                problem = "Enter a name for the new liveset."
+            elif creating and app.lib.exists(clean_name(new_name)):
+                problem = "A liveset of that name exists: add to it with the first choice."
+            elif not creating and not target.value:
+                problem = "Choose a liveset."
+            if problem:
+                new.error = problem if creating else None
+                target.error_text = None if creating else problem
+                push(new, target)
                 return
+            app.page.pop_dialog()
             try:
-                tsl = (app.lib.create(new_name) if new_name
-                       else app.lib.load(target.value))
+                tsl = (app.lib.create(new_name) if creating else app.lib.load(target.value))
             except (LibraryFull, OSError, ValueError) as err:
                 app.set_status(f"Save to library failed: {err}")
                 return
-            name = app.patch_name()
+            name = patch_name()
             same = [i for i in range(len(tsl)) if tsl.patch_name(i) == name]
             if name and same:
                 confirm_overwrite(tsl, same[0])
@@ -198,8 +247,8 @@ class PatchEditor:
 
         new.on_submit = ok
         app.page.show_dialog(ft.AlertDialog(
-            title=ft.Text(f"Save “{app.patch_name() or 'patch'}” to library"),
-            content=ft.Column([target, new], tight=True, spacing=12, width=320),
+            title=ft.Text(f"Save “{patch_name() or 'patch'}” to library"),
+            content=ft.Column([mode], tight=True, spacing=12, width=340),
             bgcolor=theme.PANEL_TOP,
             actions=[pv.link_button("Cancel",
                                     lambda e: app.page.pop_dialog(),
@@ -234,8 +283,8 @@ class PatchEditor:
         self.left.update()
 
     def _name_focus(self, focused: bool) -> None:
-        """Remember whether the name field has the focus, so that Ctrl+Z there
-        is the field's own undo and not the editor's."""
+        """Remember whether the name field (or the notes field) has the focus, so that
+        Ctrl+Z there is the field's own undo and not the editor's."""
         self.name_field_focused = focused
         if focused:
             Knob.deselect()                 # the arrow keys move the text cursor now
@@ -367,7 +416,7 @@ class PatchEditor:
         region = self.app.region_for(self.app.patch_number)
         names = [b.name for b in region.blocks
                  if b.name != "COM" and not b.name.startswith("FX_DETAIL")]
-        self._tab_specs = model.group_blocks(names)
+        self._tab_specs = model.group_blocks(names) + [(NOTES_TAB, [])]     # notes: no block
         self._built: set[int] = set()
         self._widgets.clear()           # the old tabs' widgets are gone
         self._tab_bar.tabs = [ft.Tab(label=label.upper(), height=_TAB_HEIGHT)
@@ -398,6 +447,19 @@ class PatchEditor:
             self._build_tab(i)
             self._tab_view.controls[i].update()
 
+    def _notes_card(self) -> ft.Control:
+        """The notes of the patch (kept with it in the library: Save to library writes them)."""
+        field = ft.TextField(
+            value=self.app.notes, multiline=True, min_lines=10, max_lines=24,
+            hint_text="Notes about this patch: the guitar and pickup, the song, what it is for…",
+            on_change=lambda e: setattr(self.app, "notes", e.control.value or ""),
+            on_focus=lambda e: self._name_focus(True),
+            on_blur=lambda e: self._name_focus(False), expand=True, **pv.FIELD_STYLE)
+        hint = ft.Text("Notes are not stored on the amp. Save to library keeps them with the "
+                       "patch.", size=11, color=theme.MUTED)
+        # The field is in a row so that it takes the whole width of the card.
+        return pv.module_card("Notes", [ft.Row([field]), hint], led=bool(self.app.notes.strip()))
+
     def _build_tab(self, i: int) -> None:
         """Build one tab: the explicit grid from `_TAB_LAYOUTS` when the
         group has one (blocks the grid omits go last), a responsive grid
@@ -413,6 +475,13 @@ class PatchEditor:
             for r in model.row_for_block(region, "COLOR", self.app.ps)}
         label, blocks = self._tab_specs[i]
         layout = self._TAB_LAYOUTS.get(label)
+        if label == NOTES_TAB:
+            card = self._notes_card()
+            card.expand = True              # in a row, so it takes the whole width of the tab
+            self._tab_view.controls[i].content = ft.Column(
+                [ft.Row([card])], scroll=ft.ScrollMode.AUTO, expand=True)
+            self._built.add(i)
+            return
         if label == "Assign":
             with pv.collect_widgets(self._widgets):
                 view = self._assign_view(region, blocks)

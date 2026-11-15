@@ -3,6 +3,35 @@
 The **Library** tab keeps your patches in livesets (`.tsl` files, the same format as
 BOSS Tone Studio and Tone Central use).  See also [Backup and restore](backup.md).
 
+## Saving a patch to the library
+
+**Save to library** (on the PATCH tab, and on the [TONE AI](tone-ai.md) tab for a suggestion)
+asks where the patch goes, with two choices:
+
+- **Add to an existing liveset**: pick it from the list.  If it already has a patch of the same
+  name you are asked whether to overwrite it (its notes are kept).
+- **Create a new liveset**: type its name.  A name that is already used is refused (add to that
+  liveset with the first choice instead of getting a "Name 2").
+
+Picking from the list chooses the first way, and clicking or typing in the name field the
+second.  A liveset holds up to 15 patches, and the library up to 50 livesets.
+
+## Notes
+
+A patch in the library can carry **notes**: free text such as the guitar and pickup it is made
+for, the song, or what to remember when playing it.  They are the patch's *memo* in the `.tsl`
+file, so they travel with the liveset (a memo that Tone Central wrote as an object keeps its
+other entries; only its text changes).  The amp does not store notes.
+
+- **In the editor** the last tab of the patch is **Notes**.  Type there; **Save to
+  library** keeps the notes with the patch.  Overwriting a patch replaces its notes with the
+  editor's, unless the editor has none, in which case the old ones stay.
+- **In the library** a patch's menu has **Notes…**, which edits the notes of that patch in
+  place.  A patch that has notes shows a note icon; hover it to read them.
+- **Load into editor** brings a patch's notes into the Notes block; so does playing the patch
+  from the [setlist](setlist.md).  Reading a patch from the amp starts with empty notes.
+- Copying or moving a patch to another liveset takes its notes along.
+
 ## Search, tags and favourites
 
 - **Search** shows the livesets whose name, tags or any patch name contain all the

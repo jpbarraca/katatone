@@ -24,6 +24,7 @@ class Setlist:
     names: list[str]
     patches: list[ParamSet | None]
     index: int | None = field(default=None)
+    notes: list[str] = field(default_factory=list)       # the patches' notes, as in the library
 
     @classmethod
     def from_tsl(cls, tsl: Tsl) -> "Setlist":
@@ -31,7 +32,12 @@ class Setlist:
         return cls(tsl.name,
                    [tsl.patch_name(i) for i in range(len(tsl))],
                    [tsl.to_paramset(i) if tsl.patches[i] else None
-                    for i in range(len(tsl))])
+                    for i in range(len(tsl))],
+                   notes=[tsl.note(i) for i in range(len(tsl))])
+
+    def note(self, i: int) -> str:
+        """The notes of slot ``i``."""
+        return self.notes[i] if 0 <= i < len(self.notes) else ""
 
     def playable(self, i: int) -> bool:
         """Whether slot ``i`` holds a patch."""

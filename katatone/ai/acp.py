@@ -5,8 +5,14 @@ question starts the agent, opens a session in an empty temporary directory, asks
 model, sends the prompt, collects the text the agent streams back and stops the agent.
 
 The agent is only asked to answer: it gets no file or terminal access from this client, is
-told to use no tools (``_meta.claudeCode.options.tools``, which other agents ignore) and
-every permission it asks for is refused.
+told to use no tools and every permission it asks for is refused.
+
+Every question stands alone.  Besides starting a process and a session for each one, the Claude
+agent is told (``_meta.claudeCode.options``, which other agents ignore) to use no tools, to
+load none of the user's, project's or local settings (so no ``CLAUDE.md``, memory, skills or
+hooks of the user reach the model) and not to keep the session on disk (it would otherwise
+leave a transcript, and a project, in ``~/.claude`` for each question), and it is started with
+its automatic memory off (that makes a project folder per question too).
 """
 from __future__ import annotations
 
@@ -27,6 +33,10 @@ from .client import AiError
 from .setup import child_env
 from .store import Settings
 
+#: The Claude agent's options (see the module's doc): nothing in, nothing kept.
+ISOLATED = {"tools": [], "settingSources": [], "persistSession": False}
+#: The environment the agent is started with, on top of the usual one.
+ISOLATED_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
 PROTOCOL_VERSION = 1
 TIMEOUT_S = 180.0
 #: How long the agent gets to leave when its work is done, before it is killed.
@@ -52,7 +62,7 @@ class _Agent:
             self.proc = subprocess.Popen(
                 argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, encoding="utf-8", cwd=cwd, start_new_session=True,
-                env=child_env())
+                env={**child_env(), **ISOLATED_ENV})
         except FileNotFoundError:
             raise AiError(f"Cannot start {argv[0]!r}: is it installed? For Claude: "
                           "npm install -g @agentclientprotocol/claude-agent-acp") from None
@@ -234,7 +244,7 @@ def chat(settings: Settings, system: str, user: str, *, timeout: float = TIMEOUT
         caps = (init.get("agentCapabilities") or {}).get("sessionCapabilities") or {}
         own_prompt = "systemPrompt" in caps
         params: dict[str, Any] = {"cwd": work, "mcpServers": [],
-                                  "_meta": {"claudeCode": {"options": {"tools": []}}}}
+                                  "_meta": {"claudeCode": {"options": dict(ISOLATED)}}}
         if own_prompt:
             params["systemPrompt"] = {"mode": "override",
                                       "content": [{"type": "text", "text": system}]}

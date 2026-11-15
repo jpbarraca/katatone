@@ -38,6 +38,31 @@ def prompt(page: ft.Page, title: str, value: str, on_ok: Callable[[str], None],
                  pv.button("Save", ft.Icons.CHECK, ok, primary=True)]))
 
 
+def notes(page: ft.Page, title: str, value: str, on_ok: Callable[[str], None]) -> None:
+    """Show a multi-line text dialog for the notes of a patch.
+
+    Args:
+        page: the Flet page.
+        title: the dialog title.
+        value: the current notes.
+        on_ok: called with the text (stripped; empty clears the notes) when Save is pressed.
+    """
+    ft.context.disable_auto_update()
+    field = ft.TextField(value=value, autofocus=True, multiline=True, min_lines=6, max_lines=14,
+                         width=480, hint_text="The guitar and pickup, the song, what it is for…",
+                         **pv.FIELD_STYLE)
+
+    def ok(e=None) -> None:
+        """Close the dialog and hand the text to `on_ok`."""
+        page.pop_dialog()
+        on_ok((field.value or "").strip())
+
+    page.show_dialog(ft.AlertDialog(
+        title=ft.Text(title), content=field, bgcolor=theme.PANEL_TOP,
+        actions=[pv.link_button("Cancel", lambda e: page.pop_dialog(), color=theme.MUTED),
+                 pv.button("Save", ft.Icons.CHECK, ok, primary=True)]))
+
+
 def confirm(page: ft.Page, text: str, on_ok: Callable[[], None],
             label: str = "Delete", icon=ft.Icons.DELETE_OUTLINE) -> None:
     """Show a confirmation dialog.

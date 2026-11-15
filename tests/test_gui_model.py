@@ -622,7 +622,8 @@ def _amp_tab():
     from katatone.model.paramset import ParamSet
     region = load_map()["PATCH(1)"]
     ed = object.__new__(pe.PatchEditor)
-    ed.app = types.SimpleNamespace(ps=ParamSet(), region_for=lambda n: region, patch_number=0)
+    ed.app = types.SimpleNamespace(ps=ParamSet(), region_for=lambda n: region, patch_number=0,
+                                   notes="")
     ed._active_colors = {}
     ed._set_param = lambda *a: None
     ed._widgets = {}
@@ -645,6 +646,7 @@ def test_the_amp_tab_has_the_chain_above_an_amp_card_holding_other_and_ns() -> N
     all_titles = [_titles(r)[0] for r in rows]
     assert all_titles.count("AMP") == 1 and "OTHER" not in all_titles and "NS" not in all_titles
     assert all_titles[0] == "AMP" and "EFFECTS" not in all_titles       # the amp on top, no Effects card
+    assert "NOTES" not in all_titles                                    # the notes have a tab of their own
 
 
 def test_the_chain_order_follows_the_preset_and_the_positions() -> None:

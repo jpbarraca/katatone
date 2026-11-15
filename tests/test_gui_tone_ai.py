@@ -126,13 +126,14 @@ def test_a_reply_that_is_not_json_is_asked_for_again_once(pane) -> None:
     assert len(pane.calls) == 4 and pane.proposal is None and "not a JSON" in pane.status.value
 
 
-def test_server_errors_are_shown_and_keep_the_last_suggestion(pane) -> None:
+def test_server_errors_are_shown_and_the_old_suggestion_is_not_left_to_pass_for_the_answer(pane) -> None:
     _ask(pane)
-    first = pane.proposal
+    assert pane.proposal is not None and pane.result.controls
     pane.replies = [client.AiError("The server rejected the API key.")]
     _ask(pane, "another song")
     assert pane.status.value == "The server rejected the API key."
-    assert pane.proposal is first and not pane.spinner.visible and not pane.ask_button.disabled
+    assert pane.proposal is None and pane.result.controls == []      # nothing of the first song
+    assert not pane.spinner.visible and not pane.ask_button.disabled
 
 
 def test_the_model_not_knowing_the_song_is_shown(pane) -> None:
@@ -205,7 +206,6 @@ def test_choosing_claude_through_acp(pane, app) -> None:  # noqa: F811
     s = pane.settings
     assert (s.provider, s.acp_model, s.acp_command) == ("acp", "sonnet", "claude-agent-acp")
     assert store.load(store.default_path()).provider == "acp"
-    assert "claude-agent-acp (ACP)" in pane.amp_text.value
 
 
 def test_asking_through_acp_needs_no_key(pane) -> None:
@@ -341,3 +341,165 @@ def test_a_question_that_fails_for_sign_in_points_to_the_dialog(pane) -> None:
 def test_the_search_row_leaves_room_for_the_floating_label(pane) -> None:
     top = pane.root.controls[0]                         # the "Song" label floats above the field
     assert top.padding.top >= 8 and pane.query in top.content.controls
+
+
+# ---- Save to library: a copy with the taken settings, the editor left alone
+
+def _save(pane, app, liveset="Mine"):  # noqa: F811
+    """Press Save to library, name a new liveset (or, with None, keep the one picked), Save."""
+    pane.save_to_library()
+    dialog = app.page.dialogs[-1]
+    mode = dialog.content.controls[0]
+    if liveset is not None:
+        new = mode.content.controls[3]
+        new.value = liveset
+        new.on_change(None)
+    dialog.actions[1].on_click(None)
+    return dialog
+
+
+def test_save_to_library_keeps_a_copy_named_after_the_song(pane, app) -> None:  # noqa: F811
+    from katatone.liveset.tsl import Tsl  # noqa: F401
+    _ask(pane)
+    before = dict(app.ps.data)
+    dialog = _save(pane, app)
+    assert "Sultans of Swing" in dialog.title.value
+    tsl = app.lib.load("Mine")
+    assert len(tsl) == 1 and tsl.patch_name(0) == "Sultans of Swing"
+    saved, region = tsl.to_paramset(0), app.region_for(app.patch_number)
+    assert saved.get_param(region, "AMP", 0) == 30 and saved.get_param(region, "SW", 3) == 1
+    assert app.ps.data == before and not app.dirty          # the editor (and the amp) untouched
+    assert "Saved 'Sultans of Swing'" in app.last_status
+
+
+def test_save_to_library_saves_only_what_is_taken(pane, app) -> None:  # noqa: F811
+    _ask(pane)
+    _rows(pane, "amp")["gain"].selected = False
+    for r in _rows(pane, "delay").values():
+        r.selected = False
+    _save(pane, app)
+    saved = app.lib.load("Mine").to_paramset(0)
+    region = app.region_for(app.patch_number)
+    assert saved.get_param(region, "AMP", 0) == 0 and saved.get_param(region, "SW", 3) == 0
+    assert saved.get_param(region, "AMP", 1) == 50          # volume was taken
+
+
+def test_save_to_library_after_apply_saves_what_the_editor_has(pane, app) -> None:  # noqa: F811
+    _ask(pane)
+    pane.apply()                                            # nothing is left to change
+    _save(pane, app)
+    saved = app.lib.load("Mine").to_paramset(0)
+    assert saved.get_param(app.region_for(app.patch_number), "AMP", 0) == 30
+
+
+def test_save_to_library_needs_a_suggestion_and_the_same_patch(pane, app) -> None:  # noqa: F811
+    from katatone.model.paramset import ParamSet
+    pane.save_to_library()
+    assert app.page.dialogs == []                           # nothing asked yet
+    _ask(pane)
+    app.ps = ParamSet()                                     # the editor holds another patch now
+    pane.save_to_library()
+    assert app.page.dialogs == [] and "changed" in pane.status.value
+
+
+def test_save_to_library_can_add_to_an_existing_liveset(pane, app) -> None:  # noqa: F811
+    app.lib.create("Mine")
+    _ask(pane)
+    _save(pane, app, liveset=None)                          # the existing liveset is picked
+    pane.replies = [json.dumps({**REPLY, "match": {"song": "Another One"}})]
+    _ask(pane, "another")
+    _save(pane, app, liveset=None)
+    tsl = app.lib.load("Mine")
+    assert [tsl.patch_name(i) for i in range(len(tsl))] == ["Sultans of Swing", "Another One"]
+    assert [e.name for e in app.lib.list()] == ["Mine"]     # no second liveset made
+
+
+# ---- the guitar
+
+def test_the_guitar_goes_with_the_song(pane) -> None:
+    pane.guitar.value = "Fender Stratocaster, single coils"
+    _ask(pane)
+    assert pane.calls[0][1] == ('Song: "sultans of swing"\nAmp: KATANA-50 Gen 3\n'
+                                'Guitar: "Fender Stratocaster, single coils"')
+    assert "on Fender Stratocaster" not in pane.status.value            # the answer replaced it
+
+
+def test_without_a_guitar_none_is_sent(pane) -> None:
+    _ask(pane)
+    assert "Guitar" not in pane.calls[0][1]
+
+
+def test_the_guitar_is_remembered_for_the_next_time(pane, app) -> None:  # noqa: F811
+    pane.guitar.value = " Gibson Les Paul "
+    _ask(pane)
+    assert store.load(store.default_path(), env={}).guitar == "Gibson Les Paul"
+    again = tone_ai_pane._ToneAiPane(app)
+    assert again.guitar.value == "Gibson Les Paul"
+    pane.replies = [json.dumps(REPLY)]
+    pane.guitar.value = ""                                              # cleared: forgotten too
+    _ask(pane)
+    assert store.load(store.default_path(), env={}).guitar == ""
+
+
+def test_saving_the_settings_keeps_the_guitar(pane, app) -> None:  # noqa: F811
+    pane.guitar.value = "Telecaster"
+    pane.open_settings()
+    dialog, f = _dialog(app)
+    dialog.actions[1].on_click(None)
+    assert pane.settings.guitar == "Telecaster"
+    assert store.load(store.default_path(), env={}).guitar == "Telecaster"
+
+
+def test_the_pickup_advice_is_shown_with_the_suggestion(pane) -> None:
+    pane.replies = [json.dumps({**REPLY, "pickup": "neck pickup, tone knob at 8"})]
+    _ask(pane, "Sultans of Swing")
+    assert pane.proposal.pickup == "neck pickup, tone knob at 8"
+    header = pane._header(pane.proposal)
+    shown = [s.text for c in header.content.controls for s in getattr(c, "spans", None) or []]
+    assert "Pickup: " in shown and "neck pickup, tone knob at 8" in shown
+
+
+def test_the_search_row_holds_song_guitar_ask_and_settings(pane) -> None:
+    row = pane.root.controls[0].content
+    assert row.controls[:3] == [pane.query, pane.guitar, pane.ask_button]
+    assert pane.guitar.on_submit is not None
+
+
+# ---- every question stands alone
+
+def test_the_last_suggestion_is_gone_as_soon_as_the_next_question_is_asked(pane, app) -> None:  # noqa: F811
+    _ask(pane)
+    assert pane.proposal is not None
+    seen = {}
+    real = pane.app.page.run_thread
+
+    def hold(fn, *args):                                # the answer is on its way: look at the screen
+        seen["proposal"], seen["cards"] = pane.proposal, list(pane.result.controls)
+    pane.app.page.run_thread = hold
+    pane.replies = [json.dumps(REPLY)]
+    pane.query.value = "another song"
+    pane.ask()
+    assert seen == {"proposal": None, "cards": []}
+    pane.app.page.run_thread = real
+
+
+def test_a_question_carries_nothing_of_the_one_before(pane) -> None:
+    pane.guitar.value = "Fender Stratocaster"
+    _ask(pane, "Wonderwall")
+    pane.replies = [json.dumps({**REPLY, "match": {"song": "Back in Black"}, "pickup": "bridge"})]
+    pane.guitar.value = ""
+    _ask(pane, "Back in Black")
+    (system_a, user_a), (system_b, user_b) = pane.calls
+    assert system_a == system_b                         # the instructions are the same every time
+    assert user_b == 'Song: "Back in Black"\nAmp: KATANA-50 Gen 3'
+    assert "Wonderwall" not in user_b and "Stratocaster" not in user_b
+    assert "Back in Black" not in system_b and "Wonderwall" not in system_b
+    assert pane.proposal.song == "Back in Black" and pane.proposal.pickup == "bridge"
+
+
+def test_the_same_question_is_asked_the_same_way_every_time(pane) -> None:
+    for _ in range(3):
+        pane.replies = [json.dumps(REPLY)]
+        _ask(pane, "sultans of swing")
+    assert len(set(pane.calls)) == 1                    # no history is added to the request
+    assert len(pane.calls) == 3

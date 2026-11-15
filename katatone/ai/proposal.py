@@ -5,9 +5,11 @@ Nothing here knows about the GUI: the tab shows the rows and flips ``selected``,
 """
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass, field
 
 Change = tuple[str, int, int]                  # (block, parameter index, display value)
+PATCH_NAME_LENGTH = 16                          # what the amp's patch names hold, in ASCII
 
 
 @dataclass(eq=False)
@@ -73,8 +75,11 @@ class Proposal:
     confidence: str = ""
     rig: str = ""
     reasoning: str = ""
+    pickup: str = ""                    # which pickup or position of the guitar to use
     notes: str = ""
     sections: list[Section] = field(default_factory=list)
+    take_notes: bool = True             # whether the text of the suggestion goes to the patch's notes
+    notes_present: bool = False         # ... and it is already in the notes: nothing to add
     missing: list[str] = field(default_factory=list)     # titles of the sections not in the reply
     skipped: list[str] = field(default_factory=list)     # "Delay: type 'x': not one of ..."
 
@@ -88,10 +93,36 @@ class Proposal:
         active.sort(key=lambda r: r.role != "type")          # stable: the order is kept otherwise
         return [(r.block, r.p_index, r.new) for r in active]
 
+    @property
+    def notes_pending(self) -> bool:
+        """Whether applying adds the suggestion's text to the notes."""
+        return self.take_notes and not self.notes_present
+
     def select_all(self, on: bool) -> None:
-        """Take (or drop) every row that changes the patch."""
+        """Take (or drop) every row that changes the patch, and the text for the notes."""
         for s in self.sections:
             s.set_all(on)
+        self.take_notes = on and not self.notes_present
+
+    def notes_text(self) -> str:
+        """The suggestion as plain text for a patch's notes: the song, the original rig, the
+        approach, the pickup and the model's notes (what the suggestion card shows)."""
+        title = " — ".join(x for x in (self.song, self.artist) if x)
+        head = f"Tone AI suggestion for {title}" if title else "Tone AI suggestion"
+        if self.confidence and self.confidence != "high":
+            head += f" ({self.confidence} confidence)"
+        lines = [head]
+        for label, text in (("Original rig", self.rig), ("Approach", self.reasoning),
+                            ("Pickup", self.pickup), ("Notes", self.notes)):
+            if text.strip():
+                lines.append(f"{label}: {' '.join(text.split())}")
+        return "\n".join(lines)
+
+    def patch_name(self) -> str:
+        """A name for a patch with these settings: the song, as the amp can show it (ASCII,
+        accents dropped, at most 16 characters)."""
+        text = unicodedata.normalize("NFKD", self.song).encode("ascii", "ignore").decode()
+        return " ".join(text.split())[:PATCH_NAME_LENGTH].rstrip() or "Tone AI"
 
     @property
     def count(self) -> int:

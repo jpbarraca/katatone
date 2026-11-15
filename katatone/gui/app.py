@@ -134,6 +134,7 @@ class App:
         self.connected = False
         self.patch_number = 0
         self.ps = ParamSet()            # working patch
+        self.notes = ""                 # its notes: kept with it in the library, not on the amp
         self.slot_names: dict[int, str] = {}    # last known patch name per slot
         self.slot_cache: dict[int, ParamSet] = {}   # each slot as last read or written
         self.muted = False              # the amp's preview is muted (the mute button)
@@ -740,6 +741,7 @@ class App:
                         return              # a newer request owns the editor now
                     dirty = self._apply_recent_writes(ps, n)
                     self.ps = ps
+                    self.notes = ""             # the amp keeps no notes
                     self.dirty = dirty
                     self.patch_number = n
                     self._read_pending = False
@@ -1326,7 +1328,6 @@ class App:
         statusbar.refresh(self)
         midi_pane.refresh(self)
         setlist_pane.refresh(self)
-        tone_ai_pane.refresh(self)
         self.page.update()
         self.maybe_load_system()        # an operation just ended: the SYSTEM tab may be waiting
 
@@ -1450,6 +1451,7 @@ class App:
         self.live.clear()
         with self.state_lock:
             self.ps = ps
+            self.notes = sl.note(i)
             self.dirty = False
             self.recent_writes.clear()
         self.set_live_ready(True)
@@ -1481,7 +1483,20 @@ class App:
             plan = eqapply.plan(self.ps, kind, values)
         self.apply_group(plan.changes, "the EQ", plan.note)
 
-    def apply_group(self, changes: list[tuple[str, int, int]], what: str, note: str = "") -> None:
+    def merged_notes(self, text: str) -> str:
+        """The editor patch's notes with ``text`` below what is there; nothing is lost, and
+        text that is already in the notes is not added twice."""
+        text = text.strip()
+        if not text or text in self.notes:
+            return self.notes
+        return f"{self.notes.rstrip()}\n\n{text}" if self.notes.strip() else text
+
+    def add_notes(self, text: str) -> None:
+        """Add ``text`` to the editor patch's notes (see :meth:`merged_notes`)."""
+        self.notes = self.merged_notes(text)
+
+    def apply_group(self, changes: list[tuple[str, int, int]], what: str, note: str = "",
+                    notes: str = "") -> None:
         """Set several parameters of the editor's patch as one undoable step, and send them
         to the amp when live.
 
@@ -1489,10 +1504,14 @@ class App:
             changes: ``(block, parameter index, display value)`` for each parameter.
             what: what the step is, for the undo message ("the EQ").
             note: the status line (the default says how many parameters changed).
+            notes: text to add to the patch's notes (see :meth:`add_notes`), with or without
+                changes: notes are not on the amp, so they are not an undoable step.
         """
         if self.busy:
             return self.set_status("Wait for the current operation to finish.")
         with self.state_lock:
+            if notes:
+                self.add_notes(notes)
             if changes:
                 region = self.region_for(self.patch_number)
                 before = [(b, i, self.ps.get_param(region, b, i)) for b, i, _ in changes]
@@ -1502,12 +1521,11 @@ class App:
                     self.ps.set_param(region, b, i, v)
         self.set_status(note or f"Applied {len(changes)} change{'s' * (len(changes) != 1)} to "
                                 f"{what}. Ctrl+Z undoes them.")
-        if not changes:
-            return
-        self.mark_dirty()
-        for b, i, v in changes:
-            self.param_changed(b, i, v)
-        if self.ui_attached:
+        if changes:
+            self.mark_dirty()
+            for b, i, v in changes:
+                self.param_changed(b, i, v)
+        if (changes or notes) and self.ui_attached:
             self.editor.refresh()
 
     def take_value(self, block: str, p_index: int, value: int) -> None:
@@ -1682,15 +1700,17 @@ class App:
         library_pane.refresh(self)
         self.page.update()
 
-    def load_into_editor(self, ps: ParamSet, label: str) -> None:
+    def load_into_editor(self, ps: ParamSet, label: str, notes: str = "") -> None:
         """Put a librarian patch into the editor (unsaved: Write stores it in
         the currently selected amp slot).
 
         Args:
             ps: the ``ParamSet`` to load.
             label: the patch's display name, shown in the status line.
+            notes: the patch's notes (its memo in the liveset).
         """
         self.ps = ps
+        self.notes = notes
         self.dirty = True
         self.set_live_ready(False)
         self.set_status(f"Loaded {label} into the editor — Write to store it "

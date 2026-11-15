@@ -63,3 +63,34 @@ def test_an_unknown_provider_is_ignored(tmp_path) -> None:
     path.write_text(json.dumps({"provider": "gemini", "acp_model": 7}))
     s = store.load(path, env={})
     assert s.provider == "openai" and s.acp_model == "sonnet"
+
+
+def test_the_guitar_is_kept(tmp_path) -> None:
+    path = tmp_path / "ai.json"
+    assert store.Settings().guitar == ""
+    store.save(store.Settings(guitar="Gibson Les Paul"), path)
+    assert store.load(path, env={}).guitar == "Gibson Les Paul"
+
+
+def test_a_key_from_the_environment_is_not_written_to_the_file(tmp_path) -> None:
+    path = tmp_path / "ai.json"
+    env = {"OPENAI_API_KEY": "sk-env"}
+    s = store.load(path, env=env)
+    assert s.api_key == "sk-env"
+    s.guitar = "Strat"
+    store.save(s, path, env=env)                          # e.g. remembering the guitar
+    assert "sk-env" not in path.read_text()
+    assert store.load(path, env={}).guitar == "Strat" and store.load(path, env={}).api_key == ""
+
+
+def test_a_key_that_is_typed_or_already_saved_is_kept(tmp_path) -> None:
+    path = tmp_path / "ai.json"
+    env = {"OPENAI_API_KEY": "sk-env"}
+    store.save(store.Settings(api_key="sk-typed"), path, env=env)
+    assert store.load(path, env={}).api_key == "sk-typed"
+    s = store.load(path, env=env)                         # the file's key wins over the environment's
+    s.guitar = "Strat"
+    store.save(s, path, env=env)
+    assert store.load(path, env={}).api_key == "sk-typed"
+    store.save(store.Settings(api_key="sk-env"), path, env=env)      # the file's own key stays,
+    assert store.load(path, env={}).api_key == "sk-typed"            # not the environment's

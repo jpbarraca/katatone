@@ -27,6 +27,26 @@ MAX_PATCHES = 15          # limit per liveset
 NAME_BLOCK = "PATCH%COM"  # 16-byte patch name
 
 
+def memo_text(memo) -> str:
+    """The notes in a patch's memo: the text of a plain memo, or the ``memo`` entry of the
+    PatchInfo object Tone Central writes (its other entries are not notes)."""
+    if isinstance(memo, str):
+        return memo
+    if isinstance(memo, dict) and isinstance(memo.get("memo"), str):
+        return memo["memo"]
+    return ""
+
+
+def with_memo_text(memo, text: str):
+    """``memo`` carrying ``text`` as its notes: a plain memo is replaced; a PatchInfo object
+    keeps its other entries (Tone Central's own) and only its ``memo`` text changes."""
+    if isinstance(memo, dict):
+        out = copy.deepcopy(memo)
+        out["memo"] = text
+        return out
+    return text
+
+
 class LivesetFull(ValueError):
     """Raised when adding a patch to a liveset that already has MAX_PATCHES."""
 
@@ -197,6 +217,14 @@ class Tsl:
             patch: paramSet dict (block id -> list of hex byte strings).
         """
         self.patches[index] = {k: list(v) for k, v in patch.items()}
+
+    def note(self, index: int) -> str:
+        """The notes of patch ``index`` (its memo's text; empty when it has none)."""
+        return memo_text(self.memos[index])
+
+    def set_note(self, index: int, text: str) -> None:
+        """Set the notes of patch ``index``, keeping what else its memo holds."""
+        self.memos[index] = with_memo_text(self.memos[index], text)
 
     def duplicate(self, index: int) -> int:
         """Copy patch ``index`` and insert the copy right after it.

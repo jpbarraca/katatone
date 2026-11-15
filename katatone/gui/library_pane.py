@@ -386,8 +386,10 @@ class _LibraryPane:
         empty = not tsl.patches[i]
         memo = tsl.memos[i]
         from_tc = isinstance(memo, dict) and memo.get("isToneCentralPatch")
+        notes = tsl.note(i).strip()
         menu = [
             ("Rename…", ft.Icons.EDIT, lambda e, i=i: self._rename_patch(i)),
+            ("Notes…", ft.Icons.STICKY_NOTE_2, lambda e, i=i: self._edit_notes(i)),
             ("Compare with editor", ft.Icons.COMPARE_ARROWS,
              lambda e, i=i: self._compare_patch(i)),
             ("Duplicate", ft.Icons.COPY_ALL,
@@ -420,6 +422,9 @@ class _LibraryPane:
                                style=ft.TextStyle(letter_spacing=1.5))]
                       if from_tc else []),
                 ], spacing=0, expand=True),
+                *([ft.IconButton(ft.Icons.STICKY_NOTE_2, icon_color=theme.MUTED, icon_size=18,
+                                 tooltip=notes if len(notes) <= 400 else notes[:400] + "…",
+                                 on_click=lambda e, i=i: self._edit_notes(i))] if notes else []),
                 ft.IconButton(ft.Icons.TUNE, icon_color=theme.ACCENT,
                               tooltip="Load into editor", disabled=empty,
                               on_click=lambda e, i=i: self._load_patch(i)),
@@ -609,13 +614,20 @@ class _LibraryPane:
         ft.context.disable_auto_update()
         tsl = self.tsl
         label = f"{tsl.patch_name(i) or f'patch {i + 1}'!r} from {tsl.name!r}"
-        self.app.load_into_editor(tsl.to_paramset(i), label)
+        self.app.load_into_editor(tsl.to_paramset(i), label, tsl.note(i))
 
     def _send_to_amp(self, i: int, n: int) -> None:
         """Write patch ``i`` of the selected liveset to amp slot ``n``."""
         ft.context.disable_auto_update()
         tsl = self.tsl
         self.app.write_amp_patch(n, tsl.to_paramset(i), tsl.patch_name(i))
+
+    def _edit_notes(self, i: int) -> None:
+        """Prompt for the notes of patch ``i`` (its memo)."""
+        dialogs.notes(self.app.page, f"Notes of {self.tsl.patch_name(i) or 'the patch'!r}",
+                      self.tsl.note(i),
+                      lambda text: self._mutate(lambda t: t.set_note(i, text),
+                                                "Notes saved." if text else "Notes cleared."))
 
     def _rename_patch(self, i: int) -> None:
         """Prompt for a new name (max 16 chars) and rename patch ``i``."""

@@ -108,3 +108,15 @@ def test_eq_follows_its_type(ps) -> None:
     assert blocks == {"EQ_EACH(1)", "EQ_GE10(1)"}
     p = parse.parse({"eq": {"type": "PARAMETRIC EQ", "params": {"low_gain": 4}}}, ps)
     assert {r.block for r in p.sections[0].rows} == {"EQ_EACH(1)", "EQ_PEQ(1)"}
+
+
+@pytest.mark.parametrize("song, name", [
+    ("Sultans of Swing", "Sultans of Swing"),
+    ("  Smells   Like Teen Spirit ", "Smells Like Teen"),          # at most 16 characters
+    ("Señorita — Ünïcode", "Senorita Unicode"),                  # accents dropped, not "?"
+    ("日本語", "Tone AI"),                                          # nothing the amp can show
+    ("", "Tone AI"),
+])
+def test_the_patch_is_named_after_the_song_as_the_amp_can_show_it(song, name) -> None:
+    from katatone.ai.proposal import Proposal
+    assert Proposal(song=song).patch_name() == name

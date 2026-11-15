@@ -34,6 +34,7 @@ class Settings:
     provider: str = "openai"
     acp_command: str = DEFAULT_ACP_COMMAND
     acp_model: str = DEFAULT_ACP_MODEL      # empty: the agent's own choice
+    guitar: str = ""                        # the guitar to suggest pickups and settings for
 
     @property
     def ready(self) -> bool:
@@ -66,8 +67,9 @@ def load(path: str | Path | None = None, env: dict | None = None) -> Settings:
             for name in ("base_url", "model", "api_key", "acp_command"):
                 if isinstance(raw.get(name), str) and raw[name].strip():
                     setattr(s, name, raw[name].strip())
-            if isinstance(raw.get("acp_model"), str):
-                s.acp_model = raw["acp_model"].strip()
+            for name in ("acp_model", "guitar"):
+                if isinstance(raw.get(name), str):
+                    setattr(s, name, raw[name].strip())
             if raw.get("provider") in PROVIDERS:
                 s.provider = raw["provider"]
     except (OSError, ValueError):
@@ -77,18 +79,26 @@ def load(path: str | Path | None = None, env: dict | None = None) -> Settings:
     return s
 
 
-def save(settings: Settings, path: str | Path | None = None) -> None:
+def save(settings: Settings, path: str | Path | None = None, env: dict | None = None) -> None:
     """Write the settings atomically with owner-only permissions.
+
+    A key that is only the ``OPENAI_API_KEY`` of the environment (see :func:`load`) is not
+    written: the file keeps the key it had, if any.
 
     Args:
         settings: what to store.
         path: the file (defaults to :func:`default_path`).
+        env: the environment to compare the key with (defaults to ``os.environ``).
     """
     p = Path(path) if path else default_path()
     tmp = p.with_suffix(".json.tmp")
+    data = asdict(settings)
+    from_env = (os.environ if env is None else env).get(ENV_KEY, "").strip()
+    if data["api_key"] and data["api_key"] == from_env:
+        data["api_key"] = load(p, env={}).api_key
     with rofs.writable(p.parent):
         p.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
-            f.write(json.dumps(asdict(settings), indent=2) + "\n")
+            f.write(json.dumps(data, indent=2) + "\n")
         os.replace(tmp, p)

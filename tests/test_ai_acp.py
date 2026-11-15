@@ -38,7 +38,8 @@ def test_the_system_prompt_replaces_the_agents_own_and_the_model_is_chosen() -> 
 
 def test_no_tools_and_an_empty_working_directory() -> None:
     seen = _seen()
-    assert seen["meta"] == {"claudeCode": {"options": {"tools": []}}}
+    assert seen["meta"] == {"claudeCode": {"options": {
+        "tools": [], "settingSources": [], "persistSession": False}}}
     assert seen["cwd_exists"] is True
 
 
@@ -137,7 +138,27 @@ def test_the_backend_picks_by_provider(monkeypatch) -> None:
     monkeypatch.setattr(client, "chat", lambda s, sys_, usr, **kw: "from openai")
     assert backend.chat(store.Settings(provider="acp"), "s", "u") == "from acp"
     assert backend.chat(store.Settings(), "s", "u") == "from openai"
-    assert backend.describe(store.Settings(provider="acp")) == "claude-agent-acp (ACP)"
     assert backend.model_label(store.Settings(provider="acp")) == "sonnet (ACP)"
     assert backend.model_label(store.Settings(provider="acp", acp_model="")) == "the agent (ACP)"
     assert backend.model_label(store.Settings()) == "gpt-4o"
+
+
+# ---- every question stands alone
+
+def test_each_question_is_a_new_process_session_and_directory() -> None:
+    first, second = _seen(), _seen()
+    assert first["prompt_count"] == second["prompt_count"] == 1      # a session never saw an earlier question
+    assert first["cwd"] != second["cwd"]                              # nor shares a directory
+    assert not Path(first["cwd"]).exists() and not Path(second["cwd"]).exists()
+    # what is sent is the question and nothing else
+    text = acp.chat(_settings(), "SYSTEM", "Song: B")
+    assert json.loads(text)["seen"]["prompt"] == "Song: B"
+
+
+def test_the_agent_is_started_without_memory_and_with_no_settings_loaded() -> None:
+    seen = _seen()
+    assert seen["env"] == "1"                                         # automatic memory off
+    options = seen["meta"]["claudeCode"]["options"]
+    assert options["settingSources"] == [] and options["persistSession"] is False
+    assert options["tools"] == []
+    assert acp.ISOLATED == {"tools": [], "settingSources": [], "persistSession": False}

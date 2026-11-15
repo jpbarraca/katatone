@@ -213,6 +213,7 @@ def parse(reply: str | dict, ps: ParamSet) -> Proposal:
     p = Proposal(song=str(match.get("song") or ""), artist=str(match.get("artist") or ""),
                  confidence=str(match.get("confidence") or "").lower(),
                  rig=str(data.get("original_rig") or ""), reasoning=str(data.get("reasoning") or ""),
+                 pickup=str(data.get("pickup") or ""),
                  notes=str(data.get("notes") or ""))
     for key in spec.SECTIONS:
         section = data.get(key)
