@@ -1,7 +1,7 @@
 # Flatpak
 
 KataTone's desktop GUI can be installed as a Flatpak: the application, its Python
-packages, the Flet desktop client, `arecord`, `aplay` and `zenity` are bundled, so nothing is
+packages, the Flet desktop client, `arecord`, `aplay`, `zenity` and Node.js with npm are bundled, so nothing is
 downloaded when it starts.  The amp is used **over USB**.  Bluetooth (the amp's BLE-MIDI
 adapter and Bluetooth MIDI controllers) and the web server are not part of this package.
 
@@ -37,6 +37,15 @@ the runtime's own ALSA configuration plus a numeric group id for sharing the sou
 Without it the Tuner and the Analyzer could not capture from the card's `sysdefault` input,
 which is the one they preselect: the runtime names the group `audio`, the sandbox has no such
 group, and `arecord` stopped with "The field ipc_gid must be a valid group".
+
+Node.js and npm are there for the **Tone AI** tab: **Install the agent** downloads the Claude
+agent (a Node program, about 400 MB, into the data directory above) and runs it.  The sandbox's
+home directory is private and empty, so the Claude sign-in is kept in
+`~/.var/app/io.github.jpbarraca.katatone/data/katatone/claude-config` (`CLAUDE_CONFIG_DIR`,
+set by KataTone), and npm's download cache in the app's cache directory.  A Claude sign-in
+made on the host with `claude` is not visible in the sandbox; use **Sign in** in the tab.  **Sign in** tries
+to open the sign-in page in your browser; the link is shown in the tab in case it does not
+open (not verified inside the sandbox yet: please report how it goes).
 
 `KATATONE_NO_BLUETOOTH=1` is set in the sandbox so that the main window does not report a
 missing Bluetooth package.
@@ -84,6 +93,8 @@ Two parts are pinned and have to be refreshed by hand when they change:
   `python3 flatpak-pip-generator.py --runtime org.gnome.Sdk//50 --prefer-wheels=numpy,msgpack
   --wheel-arches x86_64 --output python3-deps "flet-desktop==X.Y.Z" "numpy>=1.26"
   "setuptools>=68"`.  The `flet` version must match the Flet client below.
+* **Node.js** (`node-v24.22.3-linux-x64.tar.xz`, an LTS release, from nodejs.org) and its
+  checksum are in the manifest; the Claude agent needs Node 22 or newer.
 * **The Flet client** (`flet-linux-ubuntu24.04-light-amd64.tar.gz` of the same Flet
   release; the name follows the glibc of the runtime, see `flet_desktop`) and its checksum
   are in the manifest.

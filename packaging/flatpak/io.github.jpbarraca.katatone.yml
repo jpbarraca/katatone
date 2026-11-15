@@ -75,6 +75,18 @@ modules:
         sha256: f020907cfe279189d5a1864abab5707646ac3f38bb08bd6be3c389ac52246b12
         strip-components: 0
 
+  # Node.js and npm (the official build): the Tone AI tab installs the Claude agent, a Node
+  # program (Node 22 or newer), on demand and runs it; the runtime has neither.
+  - name: nodejs
+    buildsystem: simple
+    build-commands:
+      - cp -a bin lib /app/
+    cleanup: ['/lib/node_modules/npm/docs', '/lib/node_modules/npm/man']
+    sources:
+      - type: archive
+        url: https://nodejs.org/dist/v24.22.3/node-v24.22.3-linux-x64.tar.xz
+        sha256: 4f2b175a6d53a5c617a80dba2676238a0688cef28c6da4eba35c7d844e66fcfb
+
   - name: katatone
     buildsystem: simple
     build-commands:
