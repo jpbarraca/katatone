@@ -38,7 +38,7 @@ from .model import display_label
 from .headless import HeadlessPage
 from .knob import Knob
 from . import (library_pane, login, metronome_pane, midi_pane, patch_editor, pedal, setlist_pane,
-               statusbar, system_pane)
+               statusbar, system_pane, tone_ai_pane)
 
 TAB_PATCH = "PATCH"
 TAB_SYSTEM = "SYSTEM"
@@ -46,7 +46,9 @@ TAB_MIDI = midi_pane.TAB_MIDI
 TAB_LIBRARY = "LIBRARY"
 TAB_SETLIST = setlist_pane.TAB_SETLIST
 TAB_METRONOME = metronome_pane.TAB_METRONOME
-TAB_ORDER = (TAB_PATCH, TAB_SYSTEM, TAB_MIDI, TAB_LIBRARY, TAB_SETLIST, TAB_METRONOME)
+TAB_TONE_AI = tone_ai_pane.TAB_TONE_AI
+TAB_ORDER = (TAB_PATCH, TAB_SYSTEM, TAB_MIDI, TAB_LIBRARY, TAB_SETLIST, TAB_METRONOME,
+             TAB_TONE_AI)
 
 log = logging.getLogger("katatone.gui")
 
@@ -232,6 +234,7 @@ class App:
                         ft.Tab(label=TAB_LIBRARY, icon=ft.Icons.LIBRARY_MUSIC),
                         ft.Tab(label=TAB_SETLIST, icon=ft.Icons.PLAYLIST_PLAY),
                         ft.Tab(label=TAB_METRONOME, icon=ft.Icons.MORE_TIME),
+                        ft.Tab(label=TAB_TONE_AI, icon=ft.Icons.AUTO_AWESOME),
                     ], indicator_color=theme.ACCENT, label_color=theme.ACCENT,
                         unselected_label_color=theme.MUTED,
                         divider_color=theme.PANEL_EDGE,
@@ -246,6 +249,7 @@ class App:
                         library_pane.build(self),
                         setlist_pane.build(self),
                         metronome_pane.build(self),
+                        tone_ai_pane.build(self),
                     ], expand=True),
                 ],
             ),
@@ -1322,6 +1326,7 @@ class App:
         statusbar.refresh(self)
         midi_pane.refresh(self)
         setlist_pane.refresh(self)
+        tone_ai_pane.refresh(self)
         self.page.update()
         self.maybe_load_system()        # an operation just ended: the SYSTEM tab may be waiting
 
@@ -1474,18 +1479,33 @@ class App:
             return self.set_status("Wait for the current operation to finish.")
         with self.state_lock:
             plan = eqapply.plan(self.ps, kind, values)
-            if plan.changes:
+        self.apply_group(plan.changes, "the EQ", plan.note)
+
+    def apply_group(self, changes: list[tuple[str, int, int]], what: str, note: str = "") -> None:
+        """Set several parameters of the editor's patch as one undoable step, and send them
+        to the amp when live.
+
+        Args:
+            changes: ``(block, parameter index, display value)`` for each parameter.
+            what: what the step is, for the undo message ("the EQ").
+            note: the status line (the default says how many parameters changed).
+        """
+        if self.busy:
+            return self.set_status("Wait for the current operation to finish.")
+        with self.state_lock:
+            if changes:
                 region = self.region_for(self.patch_number)
-                before = [(b, i, self.ps.get_param(region, b, i)) for b, i, _ in plan.changes]
-                self.history.record(self.ps, ("group", "the EQ", next(self._group_ids)),
-                                    before, plan.changes)
-                for b, i, v in plan.changes:
+                before = [(b, i, self.ps.get_param(region, b, i)) for b, i, _ in changes]
+                self.history.record(self.ps, ("group", what, next(self._group_ids)),
+                                    before, changes)
+                for b, i, v in changes:
                     self.ps.set_param(region, b, i, v)
-        self.set_status(plan.note)
-        if not plan.changes:
+        self.set_status(note or f"Applied {len(changes)} change{'s' * (len(changes) != 1)} to "
+                                f"{what}. Ctrl+Z undoes them.")
+        if not changes:
             return
         self.mark_dirty()
-        for b, i, v in plan.changes:
+        for b, i, v in changes:
             self.param_changed(b, i, v)
         if self.ui_attached:
             self.editor.refresh()

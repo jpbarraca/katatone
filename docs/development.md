@@ -26,6 +26,7 @@ katatone/
   liveset/      .tsl liveset file format; mkii.py converts KATANA MkII livesets (assets/mkii_map.json)
   library/      Local patch library (~/.local/share/katatone/)
   remote/       Confined Tone Exchange (Tone Central) window
+  ai/           Tone AI: OpenAI and ACP clients, install/sign-in helpers, prompt, tolerant reply parser, selectable proposal
   midi/         Controller input: parser, mappings, router, learn, profiles
   net/          Wi-Fi client / access-point fallback (NetworkManager)
   auth.py       Web GUI password (hashed, with lockout)

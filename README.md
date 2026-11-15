@@ -35,6 +35,8 @@ window or as a browser interface, for example on a Raspberry Pi next to the amp.
   note and spectrogram analysis, and tap tempo
   ([details](docs/analyzer.md))
 - **Tuner** — a guitar tuner for the amp's audio input ([details](docs/tuner.md))
+- **Tone AI** — ask an OpenAI server or Claude (through ACP) for the amp settings that match a
+  song, and take the parts you like into the patch ([details](docs/tone-ai.md))
 - **Metronome** — a click track with tap tempo, bar and subdivision, played to a sound card and
   controlled from a MIDI footswitch ([details](docs/metronome.md))
 - **System settings** — edit the amp's global settings (read when you open the tab)
