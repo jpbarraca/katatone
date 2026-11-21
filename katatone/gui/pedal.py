@@ -108,3 +108,62 @@ def targets(ps: ParamSet, region: Region) -> list[tuple[str, int]]:
         if row is not None and (row.block, row.p_index) not in found:
             found.append((row.block, row.p_index))
     return found
+
+
+# ---------------------------------------------------------------- the Pedal tab's position meter
+
+#: PEDALFX_COM_TYPE value -> (the parameter holding that pedal's position, its MIN and MAX or None),
+#: all in the PEDALFX block.  The amp moves the position with the expression pedal.
+POSITION_PARAMS = {
+    0: ("PEDALFX_PEDALWAH_PEDAL_POSITION", ("PEDALFX_PEDALWAH_PEDAL_MIN", "PEDALFX_PEDALWAH_PEDAL_MAX")),
+    1: ("PEDALFX_BEND_PEDAL_POS", None),
+    2: ("PEDALFX_EWAH_PEDAL_POS", ("PEDALFX_EWAH_PEDAL_MIN", "PEDALFX_EWAH_PEDAL_MAX")),
+}
+PEDAL_TYPE_PARAM = ("PEDALFX_COM", "PEDALFX_COM_TYPE")
+
+
+def param_index(region: Region, block: str, name: str) -> int:
+    """The index of the parameter ``PRMID_PATCH_<name>`` in ``block``."""
+    wanted = "PRMID_PATCH_" + name
+    return next(i for i, p in enumerate(region.block(block).params) if p.name == wanted)
+
+
+def pedal_type(ps: ParamSet, region: Region) -> int:
+    """The selected pedal effect: 0 wah, 1 bend, 2 wah 95E (0 when unknown)."""
+    block, name = PEDAL_TYPE_PARAM
+    value = ps.get_param(region, block, param_index(region, block, name))
+    return value if value in POSITION_PARAMS else 0
+
+
+def position_param(region: Region, kind: int) -> tuple[str, int]:
+    """``(block, parameter index)`` of the position of the pedal effect ``kind``."""
+    return "PEDALFX", param_index(region, "PEDALFX", POSITION_PARAMS[kind][0])
+
+
+def range_params(region: Region, kind: int) -> tuple[tuple[str, int], tuple[str, int]] | None:
+    """The ``(block, index)`` of the MIN and the MAX of the pedal effect ``kind`` (None: it has none)."""
+    names = POSITION_PARAMS[kind][1]
+    if names is None:
+        return None
+    return tuple(("PEDALFX", param_index(region, "PEDALFX", n)) for n in names)
+
+
+class PedalReading:
+    """What the pedal has shown: its position now, and the lowest and the highest since the
+    last reset, for setting the range of a pedal (heel down should read 0, toe down 100)."""
+
+    def __init__(self, position: int | None = None) -> None:
+        self.position = position
+        self.lowest: int | None = None
+        self.highest: int | None = None
+
+    def feed(self, value: int) -> None:
+        """The pedal is at ``value`` now."""
+        self.position = value
+        self.lowest = value if self.lowest is None else min(self.lowest, value)
+        self.highest = value if self.highest is None else max(self.highest, value)
+
+    def reset(self, position: int | None = None) -> None:
+        """Forget the lowest and the highest (and take ``position`` as where the pedal is)."""
+        self.position = position if position is not None else self.position
+        self.lowest = self.highest = None

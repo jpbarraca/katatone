@@ -35,6 +35,7 @@ from ..protocol import rc6
 from ..setlist import Setlist
 from . import compare_dialog, params_view as pv, theme
 from .history import EditHistory
+from . import model as editor_model
 from .model import display_label
 from .headless import HeadlessPage
 from .knob import Knob
@@ -52,6 +53,10 @@ TAB_ORDER = (TAB_PATCH, TAB_SYSTEM, TAB_MIDI, TAB_LIBRARY, TAB_SETLIST, TAB_METR
              TAB_TONE_AI)
 
 log = logging.getLogger("katatone.gui")
+
+#: The function of the amp's own expression pedal, and the value that makes it move the Pedal FX.
+PEDAL_FUNC = ("ASSIGN_EXPPDL_FUNC", 0)
+FUNC_PEDAL_FX = 2
 
 # The amp announces its current patch with a DT1 at this (nibble) address
 # (SETUP/COM, PRMID_SETUP_COM_PATCH_NUMBER).
@@ -138,6 +143,8 @@ class App:
         self.notes = ""                 # its notes: kept with it in the library, not on the amp
         # Shows what the amp announces (its knobs, a pedal moving an effect's setting).
         self._follower = AmpFollower(self)
+        # Pedal test mode: (the amp's patch, what the pedal's function was) while it is on.
+        self._test_saved: tuple[int, int] | None = None
         self._targets_key: tuple | None = None          # see pedal_targets
         self._targets: set[tuple[str, int]] = set()
         self.slot_names: dict[int, str] = {}    # last known patch name per slot
@@ -511,6 +518,7 @@ class App:
         t = self.transport
         if t is None:
             return
+        self._end_test(restore=graceful)
         self.live.clear()
         self._cancel_resync()
         t.on_unsolicited = None
@@ -920,6 +928,8 @@ class App:
             value: its value now.
             marks_dirty: whether it counts as an unsaved edit (a knob does; a pedal's move not).
         """
+        if self._test_saved is not None and (block, p_index) == PEDAL_FUNC:
+            return                                  # the test's own setting is not the patch's
         dirty_now = False
         with self.state_lock:
             self._note_live_write_locked(block, p_index, value, marks_dirty)
@@ -930,6 +940,24 @@ class App:
         if dirty_now:
             self.mark_dirty()
 
+    def read_pedal_position(self) -> None:
+        """Read where the pedal effect's pedal is now from the amp, and show it (the Pedal tab's
+        meter); in a background thread.  Only when the editor shows the sound the amp plays."""
+        if self.connected and self.live_ready and self.transport is not None and not self.busy:
+            self.page.run_thread(self._read_pedal_position)
+
+    def _read_pedal_position(self) -> None:
+        """Worker of :meth:`read_pedal_position`."""
+        from ..amp.write import read_param
+        region = self.region_for(self.patch_number)
+        block, index = pedal.position_param(region, pedal.pedal_type(self.ps, region))
+        try:
+            value = read_param(self.transport, block, index)
+        except Exception as e:                       # noqa: BLE001
+            return log.warning("could not read the pedal position: %s", e)
+        self.mirror_announced(block, index, value, False)
+        self.show_param(block, index, value)
+
     def pedal_targets(self) -> set[tuple[str, int]]:
         """The ``(block, parameter index)`` pairs the editor patch's pedals drive.
 
@@ -937,13 +965,88 @@ class App:
         colours, the effect types, or the patch itself.
         """
         region = self.region_for(self.patch_number)
-        names = [b for pair in pedal.PEDALS for b in pair] + ["COLOR"] + [
+        names = [b for pair in pedal.PEDALS for b in pair] + ["COLOR", "PEDALFX_COM"] + [
             f"FX({n})" for n in range(1, 7)]
-        key = (id(self.ps), tuple(self.ps.block(f"PATCH%{n}") for n in names))
+        key = (id(self.ps), self.test_mode, tuple(self.ps.block(f"PATCH%{n}") for n in names))
         if key != self._targets_key:
-            self._targets = set(pedal.targets(self.ps, region))
-            self._targets_key = key
+            targets = set(pedal.targets(self.ps, region))
+            # A pedal that moves the Pedal FX drives its position (in the test mode too).
+            if self.test_mode or {self.ps.get_param(region, f, 0) for f, _ in pedal.PEDALS} & {2, 3}:
+                targets.add(pedal.position_param(region, pedal.pedal_type(self.ps, region)))
+            self._targets, self._targets_key = targets, key
         return self._targets
+
+    # ------------------------------------------------------------ pedal test mode
+
+    @property
+    def test_mode(self) -> bool:
+        """Whether the pedal test mode is on (see :meth:`set_test_mode`)."""
+        return self._test_saved is not None
+
+    @staticmethod
+    def _func_label(value: int) -> str:
+        """The name of a pedal function ("PEDAL FX")."""
+        labels = editor_model._combo_labels("PRMID_PATCH_ASSIGN_EXPPDL_FUNC_FUNCTION", 10)
+        return labels[value] if labels and 0 <= value < len(labels) else str(value)
+
+    def set_test_mode(self, on: bool) -> bool:
+        """Turn the pedal test mode on or off.
+
+        On: what the amp's expression pedal is set to do is kept and the pedal is set to move the
+        Pedal FX, so that the Pedal tab's position meter shows it whatever the patch uses it for.
+        Off: the function is put back.  Only the amp's live sound changes: the patch in the editor
+        is left as it is, so nothing of it is ever saved or written (a write puts the patch's own
+        function back and ends the mode).  Changing patch, loading one, writing or disconnecting ends it.
+
+        Args:
+            on: the new state.
+        Returns:
+            Whether the mode is in the state asked for (not when the amp is not connected and
+            showing the patch it plays).
+        """
+        if not on:
+            if self.test_mode:
+                _, orig = self._test_saved
+                self._end_test(restore=True)
+                self.set_status(f"Test mode off: the pedal is set to {self._func_label(orig)} again.")
+            return True
+        if self.test_mode:
+            return True
+        if not (self.connected and self.live_ready and self.transport is not None) or self.busy:
+            self.set_status("Test mode needs the amp connected and its patch read.")
+            return False
+        region = self.region_for(self.patch_number)
+        orig = self.ps.get_param(region, *PEDAL_FUNC)
+        slot = self.amp_patch if self.amp_patch is not None else self.patch_number
+        if not self._send_function(FUNC_PEDAL_FX):
+            self.set_status("Test mode: the amp did not take the setting.")
+            return False
+        self._test_saved = (slot, orig)
+        self.set_status(f"Test mode on: the pedal moves the Pedal FX (it was {self._func_label(orig)}).  "
+                        "Turn it off to put it back.")
+        return True
+
+    def _send_function(self, value: int) -> bool:
+        """Send the expression pedal's function to the amp's edit buffer (not to the patch)."""
+        from ..amp.write import write_param
+        self._follower.wrote(*PEDAL_FUNC)           # its echo is not news
+        try:
+            write_param(self.transport, *PEDAL_FUNC, value)
+        except Exception as e:                       # noqa: BLE001
+            log.warning("could not set the pedal function: %s", e)
+            return False
+        return True
+
+    def _end_test(self, restore: bool) -> None:
+        """Leave the test mode; ``restore`` puts the pedal's function back on the amp (when it
+        is still the patch the mode was turned on for)."""
+        saved, self._test_saved = self._test_saved, None
+        if saved is None:
+            return
+        slot, orig = saved
+        current = self.amp_patch if self.amp_patch is not None else self.patch_number
+        if restore and self.connected and self.transport is not None and current == slot:
+            self._send_function(orig)
 
     def show_param(self, block: str, p_index: int, value: int) -> None:
         """Move the on-screen widget of a parameter the router changed.
@@ -1078,6 +1181,7 @@ class App:
             ps: the ``ParamSet`` to store in the slot.
         """
         from ..amp.write import write_patch
+        self._end_test(restore=False)               # the write puts the patch's own function back
         self.set_busy(True, f"Writing {self.slot_name(n)}…")
         self.busy_writing = True
         try:
@@ -1240,6 +1344,8 @@ class App:
 
     def set_live_ready(self, ready: bool) -> None:
         """Start/stop live edit; losing sync drops any queued sends."""
+        if not ready:
+            self._end_test(restore=True)            # before the queue is dropped
         self.live_ready = ready
         if not ready:
             self.live.clear()
@@ -1257,6 +1363,8 @@ class App:
             value: the new value, already clamped to the parameter's min..max.
         """
         self._follower.wrote(block, p_index)
+        if self._test_saved is not None and (block, p_index) == PEDAL_FUNC:
+            self._test_saved = None                 # the function was chosen by hand: that stands
         if self._live():
             self.live.queue_param(block, p_index, value)
 
@@ -1810,6 +1918,7 @@ class App:
                 own name.
         """
         from ..amp.write import write_patch
+        self._end_test(restore=False)
         self.set_busy(True, f"Writing {name or 'patch'!r} to {self.slot_name(n)}…")
         self.busy_writing = True
         try:

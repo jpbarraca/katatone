@@ -11,6 +11,7 @@ generated entirely from the static address table.
 from __future__ import annotations
 from typing import TYPE_CHECKING
 
+import collections
 import dataclasses
 import re
 
@@ -20,7 +21,7 @@ from ..amp import slots
 from ..liveset.tsl import LivesetFull, Tsl
 from ..library.store import LibraryFull, clean_name
 from ..model.paramset import ParamSet
-from . import model, params_view as pv, theme
+from . import model, params_view as pv, pedal, theme
 from . import chain
 from .knob import Knob
 
@@ -446,6 +447,79 @@ class PatchEditor:
         if 0 <= i < len(self._tab_specs) and i not in self._built:
             self._build_tab(i)
             self._tab_view.controls[i].update()
+        if 0 <= i < len(self._tab_specs) and self._tab_specs[i][0] == "Pedal":
+            self.app.read_pedal_position()          # where the pedal is now, before it moves
+
+    def _pedal_meter_row(self) -> ft.Control:
+        """The pedal's position now, and the lowest and highest it has shown: to set the range of a
+        pedal (heel down should read 0, toe down 100).  The amp moves the position of the selected
+        pedal effect with the expression pedal; the meter follows it like any other widget."""
+        app = self.app
+        region = app.region_for(app.patch_number)
+        ps = app.ps
+        key = collections.namedtuple("Key", "block p_index")
+        kind = lambda: pedal.pedal_type(app.ps, region)             # noqa: E731
+        reading = pedal.PedalReading(
+            ps.get_param(region, *pedal.position_param(region, kind())))
+        big = ft.Text("—", size=48, weight=ft.FontWeight.W_900, color=theme.ACCENT)
+        bar = ft.ProgressBar(value=0, height=24, color=theme.ACCENT, bgcolor=theme.KNOB_LO, expand=True)
+        seen = ft.Text("", size=14)
+        effect = ft.Text("", size=12, color=theme.MUTED)
+
+        def show() -> None:
+            big.value = "—" if reading.position is None else str(reading.position)
+            bar.value = (reading.position or 0) / 100
+            seen.value = ("Move the pedal from heel to toe." if reading.lowest is None else
+                          f"Lowest {reading.lowest}   ·   Highest {reading.highest}")
+            span = pedal.range_params(region, kind())
+            effect.value = ("" if span is None else "Effect range:  PEDAL MIN {}   ·   PEDAL MAX {}".format(
+                *(app.ps.get_param(region, b, i) for b, i in span)))
+            for ctrl in (big, bar, seen, effect):
+                pv._push(ctrl)
+
+        def position(t: int):
+            def setter(value: int) -> None:
+                if kind() == t:                             # the pedal effect in use only
+                    reading.feed(value)
+                    show()
+            return setter
+
+        def type_changed(value: int) -> None:
+            reading.reset(app.ps.get_param(region, *pedal.position_param(region, kind())))
+            show()
+            app.read_pedal_position()
+
+        for t in pedal.POSITION_PARAMS:
+            pv._register(key(*pedal.position_param(region, t)), position(t))
+            span = pedal.range_params(region, t)
+            for b, i in span or ():
+                pv._register(key(b, i), lambda v: show())   # the effect's own range was set
+        pv._register(key(pedal.PEDAL_TYPE_PARAM[0],
+                         pedal.param_index(region, *pedal.PEDAL_TYPE_PARAM)), type_changed)
+        show()
+        def test_toggled(e) -> None:
+            if not app.set_test_mode(bool(e.control.value)):
+                e.control.value = False                     # the amp did not take it
+                pv._push(e.control)
+
+        test = pv.ToggleButton(label="Test mode", value=app.test_mode, height=32,
+                               on_change=test_toggled,
+                               tooltip="Sets the pedal to move the Pedal FX, whatever the patch "
+                                       "uses it for; off puts it back")
+        card = pv.module_card("Pedal Calibration", [
+            ft.Row([big, bar], spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Row([seen, pv.button("Reset range", ft.Icons.RESTART_ALT,
+                                    lambda e: (reading.reset(), show())), test],
+                   spacing=16, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            effect,
+            ft.Text("Test mode sets the pedal to move the Pedal FX, so that this block shows it "
+                    "whatever the patch uses the pedal for.  Turn it off to put the setting back; "
+                    "the patch itself is never changed by it.", size=11, color=theme.MUTED),
+            ft.Text("To set the range of a pedal: press it fully heel down, then fully toe down. "
+                    "Heel should read 0 and toe 100; if not, adjust the pedal's own MIN (and MAX) "
+                    "knob, press Reset range and sweep again.", size=11, color=theme.MUTED)])
+        card.expand = True                  # in a row: the whole width of the tab
+        return ft.Row([card])
 
     def _notes_card(self) -> ft.Control:
         """The notes of the patch (kept with it in the library: Save to library writes them)."""
@@ -506,6 +580,8 @@ class PatchEditor:
                         for row in layout]
                 rows += [[card(b)] for b in blocks
                          if b not in named and b not in ("COLOR", "NS", "SW")]
+                if label == "Pedal":
+                    rows.append([self._pedal_meter_row()])          # the last block of the tab
                 content = pv.card_rows(rows)
         self._tab_view.controls[i].content = ft.Column(
             [content], scroll=ft.ScrollMode.AUTO, expand=True)
@@ -610,6 +686,10 @@ class PatchEditor:
         names = cell if isinstance(cell, list) else [cell]
         return any(n in blocks for n in names)
 
+    # Titles of cards in the editor where the block's own name would not say much here (the
+    # compare dialog and the MIDI mappings, which list blocks from every tab, keep the name).
+    _BLOCK_TITLES = {"PEDALFX_COM": "General"}
+
     # Explicit card grids (rows of equal-height cards).  "SW" is the Effects
     # card; a nested list stacks cards in one column.
     _TAB_LAYOUTS = {
@@ -689,7 +769,8 @@ class PatchEditor:
         if re.fullmatch(r"FX\(\d\)", bname):
             return self._fx_card(region, bname)
         rows = model.row_for_block(region, bname, self.app.ps)
-        return pv.block_card(model.block_title(bname), rows, self._set_param,
+        return pv.block_card(self._BLOCK_TITLES.get(bname) or model.block_title(bname), rows,
+                             self._set_param,
                              style=self._body_style(bname),
                              **{**self._variation_kw(bname), **card_kw})
 

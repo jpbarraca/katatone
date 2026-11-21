@@ -197,8 +197,19 @@ def test_each_parameter_is_throttled_on_its_own(rig) -> None:
 
 # ---- in the app
 
+class FakeTransport:
+    """Takes what the live writer sends (the app's transport is a stand-in in these tests)."""
+
+    def __init__(self) -> None:
+        self.sent = []
+
+    def dt1(self, addr, data) -> None:
+        self.sent.append((addr, bytes(data)))
+
+
 def _ready(app):  # noqa: F811
     app.live_ready = True
+    app.transport = FakeTransport()
     return app
 
 

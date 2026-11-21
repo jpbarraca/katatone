@@ -20,7 +20,8 @@ window or as a browser interface, for example on a Raspberry Pi next to the amp.
 ## Features
 
 - **Patch editor** — all parameters of a patch, with live edits sent to the amp, and following
-  the amp's own knobs and its expression pedals live
+  the amp's own knobs and its expression pedals live, with a pedal position meter to set up the
+  range of a pedal ([details](docs/pedal.md))
   and undo / redo (Ctrl+Z, Ctrl+Shift+Z)
 - **Library** — save patches into livesets (`.tsl` files) and write them back to the amp;
   search, tags and favourites; compare a patch with the editor; import KATANA MkII livesets
