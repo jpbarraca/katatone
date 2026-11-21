@@ -65,6 +65,15 @@ Notes and limits:
   they never store anything. A switch change marks the patch as edited (use
   *Write* to keep it), a wah sweep does not. The router can never write,
   clear or export patches or touch the SYSTEM settings.
+- The editor also follows what the amp itself does, live: turn a knob on the amp, or move an
+  expression pedal that is plugged into the amp (or a GA-FC) and assigned to an effect's
+  setting (booster, mod, FX, delay or reverb), and the setting moves on screen as you play.
+  The amp announces each change while KataTone is connected, about twenty times a second.
+  A knob turned on the amp marks the patch as edited; a pedal's move does not (the patch
+  keeps the value it was saved with, as for a wah sweep).  This works while the editor shows
+  the patch the amp is playing, not when you have loaded a patch from the library.  It needs
+  nothing to be set up, and a pedal sending MIDI to KataTone is a different thing: that is
+  what the mappings above are for.
 - Channel switching works from any controller and the editor follows: the
   "Amp channel" card and the patch are re-read after a short pause.
 - A controller is opened exclusively; if another program holds it the tab shows

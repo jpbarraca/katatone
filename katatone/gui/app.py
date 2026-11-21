@@ -25,6 +25,7 @@ from ..address.map import load_map
 from .. import __version__, auth as auth_mod
 from .. import rofs
 from ..amp import slots
+from ..amp.follow import AmpFollower
 from ..amp.live import LiveWriter
 from ..library.store import Library
 from ..midi.manager import MidiManager
@@ -135,6 +136,10 @@ class App:
         self.patch_number = 0
         self.ps = ParamSet()            # working patch
         self.notes = ""                 # its notes: kept with it in the library, not on the amp
+        # Shows what the amp announces (its knobs, a pedal moving an effect's setting).
+        self._follower = AmpFollower(self)
+        self._targets_key: tuple | None = None          # see pedal_targets
+        self._targets: set[tuple[str, int]] = set()
         self.slot_names: dict[int, str] = {}    # last known patch name per slot
         self.slot_cache: dict[int, ParamSet] = {}   # each slot as last read or written
         self.muted = False              # the amp's preview is muted (the mute button)
@@ -902,15 +907,43 @@ class App:
             value: the value written.
             mark_dirty: whether the write counts as an unsaved edit.
         """
+        self._follower.wrote(block, p_index)         # its echo is not the amp's news
+        self.mirror_announced(block, p_index, value, mark_dirty)
+
+    def mirror_announced(self, block: str, p_index: int, value: int, marks_dirty: bool) -> None:
+        """Put a value of the amp's edit buffer into the editor's patch (the amp's own change, or
+        a write already sent): the same as :meth:`apply_live_value`, but not a write of ours.
+
+        Args:
+            block: the parameter's block name.
+            p_index: the parameter's index within the block.
+            value: its value now.
+            marks_dirty: whether it counts as an unsaved edit (a knob does; a pedal's move not).
+        """
         dirty_now = False
         with self.state_lock:
-            self._note_live_write_locked(block, p_index, value, mark_dirty)
+            self._note_live_write_locked(block, p_index, value, marks_dirty)
             if self.live_ready:
                 self.ps.set_param(self.region_for(self.patch_number),
                                   block, p_index, value)
-                dirty_now = mark_dirty
+                dirty_now = marks_dirty
         if dirty_now:
             self.mark_dirty()
+
+    def pedal_targets(self) -> set[tuple[str, int]]:
+        """The ``(block, parameter index)`` pairs the editor patch's pedals drive.
+
+        Worked out again only when what it comes from changes: the pedal assignments, the
+        colours, the effect types, or the patch itself.
+        """
+        region = self.region_for(self.patch_number)
+        names = [b for pair in pedal.PEDALS for b in pair] + ["COLOR"] + [
+            f"FX({n})" for n in range(1, 7)]
+        key = (id(self.ps), tuple(self.ps.block(f"PATCH%{n}") for n in names))
+        if key != self._targets_key:
+            self._targets = set(pedal.targets(self.ps, region))
+            self._targets_key = key
+        return self._targets
 
     def show_param(self, block: str, p_index: int, value: int) -> None:
         """Move the on-screen widget of a parameter the router changed.
@@ -951,14 +984,18 @@ class App:
     def _on_unsolicited(self, nib: int, payload: bytes) -> None:
         """Transport hook (RX thread): the amp announced its current patch.
 
-        Everything else the amp volunteers (echoes of our own writes included)
-        is ignored. Returns quickly; the real work runs on a worker thread.
+        A parameter it announces (a knob turned on the amp, a pedal moving a setting) is
+        followed in the editor (see :class:`~katatone.amp.follow.AmpFollower`).  Everything
+        else it volunteers is ignored.  Returns quickly; the real work runs on a worker thread.
 
         Args:
             nib: the nibble address of the DT1.
             payload: its data bytes.
         """
-        if nib != PATCH_NUMBER_NIB or len(payload) < 2:
+        if nib != PATCH_NUMBER_NIB:
+            self._follower.announced(nib, bytes(payload))
+            return
+        if len(payload) < 2:
             return
         n = ParamSet.raw_value(2, payload)
         if n not in [x.index for x in self.slots()]:
@@ -1219,6 +1256,7 @@ class App:
             p_index: the parameter's index within the block.
             value: the new value, already clamped to the parameter's min..max.
         """
+        self._follower.wrote(block, p_index)
         if self._live():
             self.live.queue_param(block, p_index, value)
 
