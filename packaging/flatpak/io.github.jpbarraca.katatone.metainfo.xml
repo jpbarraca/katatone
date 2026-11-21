@@ -21,6 +21,13 @@
     <category>Music</category>
   </categories>
   <releases>
+    <release version="0.6.1" date="2026-11-21">
+      <description>
+        <p>The editor follows the amp live: turn a knob on the amp, or move an expression pedal that is plugged into the amp and assigned to an effect's setting (booster, mod, FX, delay or reverb), and the setting moves on screen as you play.</p>
+        <p>Pedal tab: a Pedal Calibration block shows where the expression pedal is, the lowest and highest position it has reached and the effect's own PEDAL MIN and MAX, to set the range of a pedal (heel down should read 0, toe down 100). Test mode sets the pedal to move the Pedal FX whatever the patch uses it for, and puts the setting back when turned off; the patch itself is never changed by it.</p>
+        <p>The first block of the Pedal tab is called General.</p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-11-15">
       <description>
         <p>New TONE AI tab: type a song, and optionally your guitar, and an AI suggests the amp's settings (amp, booster, mod, FX, delay, reverb, EQ and noise suppressor) and the pickup to use. Ask an OpenAI-style server, or Claude through the Agent Client Protocol (the tab can install the agent and sign in for you). Take the whole suggestion or only the settings you like, section by section or one by one, with Apply (one undo step) or Save to library.</p>
